@@ -1,0 +1,7 @@
+data/
+mlruns/
+checkpoints/
+output/
+vectors/
+**/__pycache__/
+**/.DS_Store
