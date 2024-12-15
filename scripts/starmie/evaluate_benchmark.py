@@ -28,9 +28,13 @@ def setup_directories(benchmark):
     base_dir.mkdir(parents=True, exist_ok=True)
     return base_dir
 
-def load_embeddings(benchmark):
+def load_embeddings(benchmark, ao=None):
     """Load query and datalake embeddings for a benchmark from the starmie directory"""
-    base_path = Path(f"vectors/starmie/{benchmark}")
+    # Add ao to base path if provided
+    if ao:
+        base_path = Path(f"vectors/starmie/{benchmark}/{ao}")
+    else:
+        base_path = Path(f"vectors/starmie/{benchmark}")
 
     # Query embeddings (only one set, always from original)
     query_vectors_path = base_path / "query_vectors.pkl"
@@ -195,6 +199,8 @@ def main():
                        type=str,
                        default=None,
                        help="Optional: Override default data directory path")
+    parser.add_argument("--ao", type=str, choices=['default', 'shuffle_col'], default='default',
+                       help="Augmentation option to evaluate")
     args = parser.parse_args()
 
     if args.data_dir:
@@ -247,12 +253,22 @@ def main():
         }
     }[args.benchmark]
 
-    output_dir = setup_directories(args.benchmark)
-    base_vectors_path = Path(f"vectors/starmie/{args.benchmark}")
+    # Determine the appropriate ao based on benchmark and args
+    if args.ao == 'default':
+        if args.benchmark in ['santos', 'pylon']:
+            ao = 'drop_col'
+        elif args.benchmark in ['tus', 'tusLarge']:
+            ao = 'drop_cell'
+    else:
+        ao = args.ao
+
+    output_dir = setup_directories(args.benchmark) / ao
+    output_dir.mkdir(parents=True, exist_ok=True)
+    base_vectors_path = Path(f"vectors/starmie/{args.benchmark}/{ao}")
     gt_path = data_path / "benchmark.pkl"
 
-    # Load embeddings
-    queries, datalake_embeddings = load_embeddings(args.benchmark)
+    # Load embeddings with specific ao
+    queries, datalake_embeddings = load_embeddings(args.benchmark, ao)
 
     variants = list(datalake_embeddings.keys())
     
@@ -267,10 +283,11 @@ def main():
             "p-col",
             args.benchmark
         )
-        # Save starmie_distances.json
-        with open(output_dir / 'starmie_distances.json', 'w') as f:
+        # Save starmie_distances.json with ao in filename
+        distances_file = f'starmie_distances_{ao}.json'
+        with open(output_dir / distances_file, 'w') as f:
             json.dump(detailed_metrics, f, indent=2)
-        print(f"Distances computed and saved to starmie_distances.json")
+        print(f"Distances computed and saved to {distances_file}")
 
     # If --distances_only is specified, we skip the evaluation and return now
     if args.distances_only:
@@ -339,14 +356,14 @@ def main():
             verbose=False
         )
 
-        # Save metrics file: starmie_metrics_{variant}_{searcher_type}.json
-        metrics_filename = f"starmie_metrics_{variant}_{args.searcher_type}.json"
+        # Modify metrics filename to include ao
+        metrics_filename = f"starmie_metrics_{variant}_{args.searcher_type}_{ao}.json"
         with open(output_dir / metrics_filename, 'w') as f:
             json.dump(metrics, f, indent=2)
 
         print(f"Metrics saved to {metrics_filename}")
 
-    print("Evaluation and distance calculations completed successfully.")
+    print(f"Evaluation and distance calculations completed successfully for {ao}")
 
 if __name__ == "__main__":
     main()

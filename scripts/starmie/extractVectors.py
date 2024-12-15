@@ -154,119 +154,127 @@ if __name__ == '__main__':
                        help="Whether to return and save serialized table strings")
 
     hp = parser.parse_args()
-
     dataFolder = hp.benchmark
     isSingleCol = hp.single_column
-
     base_benchmark, variant = get_base_and_variant(hp.benchmark)
 
-    # Set augmentation and similarity model based on base benchmark
+    # Define augmentation options to process
+    augmentation_options = ['shuffle_col']  # Start with shuffle_col
+    
+    # Add benchmark-specific ao based on the base benchmark
     if base_benchmark in ['santos', 'wdc', 'pylon', 'ugen_v1', 'ugen_v2']:
-        ao = 'drop_col'
-        sm = 'tfidf_entity'
-        if isSingleCol:
-            ao = 'drop_cell'
+        benchmark_ao = 'drop_col' if not isSingleCol else 'drop_cell'
     elif base_benchmark in ['tus', 'tusLarge']:
-        ao = 'drop_cell'
-        sm = 'tfidf_entity'
-        if base_benchmark == 'tus':
-            sm = 'alphaHead'
-
-    run_id = hp.run_id
-    table_order = hp.table_order
-
-    # Load checkpoint from base benchmark path
-    model_path = f"checkpoints/starmie/{base_benchmark}/model_{ao}_{sm}_{table_order}_{run_id}.pt"
-    ckpt = torch.load(model_path, map_location=torch.device('cuda'))
-    model, trainset = load_checkpoint(ckpt)
-
-    # Setup data paths
-    DATAPATH = f"data/{base_benchmark}/"
+        benchmark_ao = 'drop_cell'
     
-    # Process query data
-    query_output_path = f"vectors/starmie/{base_benchmark}/query_vectors.pkl"
-    if variant and os.path.exists(query_output_path):
-        print("Query vectors already exist, skipping query processing")
-        process_query = False
-    else:
-        process_query = True
+    augmentation_options.append(benchmark_ao)
 
-    # Define data directories to process
-    if process_query:
-        dirs_to_process = ['query', 'datalake']
-    else:
-        dirs_to_process = ['datalake']
+    # Process for each augmentation option
+    for ao in augmentation_options:
+        print(f"\n=== Processing with augmentation option: {ao} ===")
+        
+        # Set similarity model based on base benchmark
+        if base_benchmark in ['santos', 'wdc', 'pylon', 'ugen_v1', 'ugen_v2']:
+            sm = 'tfidf_entity'
+        elif base_benchmark in ['tus', 'tusLarge']:
+            sm = 'tfidf_entity' if base_benchmark == 'tusLarge' else 'alphaHead'
 
-    # Adjust datalake path for variants
-    if variant:
-        DATAPATH = {
-            'query': f"data/{base_benchmark}/query",
-            'datalake': f"data/{base_benchmark}/datalake-{variant}"
+        run_id = hp.run_id
+        table_order = hp.table_order
+
+        # Modify model path to include augmentation option
+        model_path = f"checkpoints/starmie/{base_benchmark}/model_{ao}_{sm}_{table_order}_{run_id}.pt"
+        ckpt = torch.load(model_path, map_location=torch.device('cuda'))
+        model, trainset = load_checkpoint(ckpt)
+
+        # Setup data paths
+        DATAPATH = f"data/{base_benchmark}/"
+        
+        # Process query data
+        query_output_path = f"vectors/starmie/{base_benchmark}/query_vectors.pkl"
+        if variant and os.path.exists(query_output_path):
+            print("Query vectors already exist, skipping query processing")
+            process_query = False
+        else:
+            process_query = True
+
+        # Define data directories to process
+        if process_query:
+            dirs_to_process = ['query', 'datalake']
+        else:
+            dirs_to_process = ['datalake']
+
+        # Adjust datalake path for variants
+        if variant:
+            DATAPATH = {
+                'query': f"data/{base_benchmark}/query",
+                'datalake': f"data/{base_benchmark}/datalake-{variant}"
+            }
+        
+        total_inference_time = 0
+        total_tables = 0
+        overall_timing_stats = {}
+
+        for dir in dirs_to_process:
+            print(f"//==== Processing {dir}")
+            
+            # Get correct data folder
+            DATAFOLDER = DATAPATH[dir] if isinstance(DATAPATH, dict) else os.path.join(DATAPATH, dir)
+            
+            dfs = get_df(DATAFOLDER)
+            num_tables = len(dfs)
+            total_tables += num_tables
+            print("num dfs:", num_tables)
+
+            if hp.save_model:
+                if hp.return_serialized:
+                    dataEmbeds, serialized_tables, timing_stats = extractVectors(
+                        list(dfs.values()), model, trainset, 
+                        batch_size=64, 
+                        return_serialized=True
+                    )
+                else:
+                    dataEmbeds, timing_stats = extractVectors(
+                        list(dfs.values()), model, trainset, 
+                        batch_size=64
+                    )
+                
+                total_inference_time += timing_stats["inference_time"]
+
+                # Define output paths
+                output_dir = f"vectors/starmie/{base_benchmark}/{ao}/"  # Add ao to path
+                os.makedirs(output_dir, exist_ok=True)
+
+                if dir == 'query':
+                    output_path = os.path.join(output_dir, "query_vectors.pkl")
+                else:  # datalake
+                    suffix = f"_{variant}" if variant else ""
+                    output_path = os.path.join(output_dir, f"datalake_vectors{suffix}.pkl")
+
+                pickle.dump(dataEmbeds, open(output_path, "wb"))
+                
+                if hp.return_serialized:
+                    serialized_suffix = "_serialized"
+                    serialized_path = output_path.replace(".pkl", f"{serialized_suffix}.pkl")
+                    pickle.dump(serialized_tables, open(serialized_path, "wb"))
+
+                overall_timing_stats[dir] = timing_stats
+
+        overall_timing_stats["overall"] = {
+            "total_tables": total_tables,
+            "total_inference_time": total_inference_time,
+            "avg_time_per_table": total_inference_time / total_tables if total_tables > 0 else 0
         }
-    
-    total_inference_time = 0
-    total_tables = 0
-    overall_timing_stats = {}
 
-    for dir in dirs_to_process:
-        print(f"//==== Processing {dir}")
-        
-        # Get correct data folder
-        DATAFOLDER = DATAPATH[dir] if isinstance(DATAPATH, dict) else os.path.join(DATAPATH, dir)
-        
-        dfs = get_df(DATAFOLDER)
-        num_tables = len(dfs)
-        total_tables += num_tables
-        print("num dfs:", num_tables)
+        # Modify timing stats file path
+        suffix = f"_{variant}" if variant else "_original"
+        timing_file = f"vectors/starmie/{base_benchmark}/{ao}/timing_stats{suffix}.json"
+        os.makedirs(os.path.dirname(timing_file), exist_ok=True)
+        with open(timing_file, 'w') as f:
+            json.dump(overall_timing_stats, f, indent=4)
 
-        if hp.save_model:
-            if hp.return_serialized:
-                dataEmbeds, serialized_tables, timing_stats = extractVectors(
-                    list(dfs.values()), model, trainset, 
-                    batch_size=64, 
-                    return_serialized=True
-                )
-            else:
-                dataEmbeds, timing_stats = extractVectors(
-                    list(dfs.values()), model, trainset, 
-                    batch_size=64
-                )
-            
-            total_inference_time += timing_stats["inference_time"]
-
-            # Define output paths
-            output_dir = f"vectors/starmie/{base_benchmark}/"
-            os.makedirs(output_dir, exist_ok=True)
-
-            if dir == 'query':
-                output_path = os.path.join(output_dir, "query_vectors.pkl")
-            else:  # datalake
-                suffix = f"_{variant}" if variant else ""
-                output_path = os.path.join(output_dir, f"datalake_vectors{suffix}.pkl")
-
-            pickle.dump(dataEmbeds, open(output_path, "wb"))
-            
-            if hp.return_serialized:
-                serialized_suffix = "_serialized"
-                serialized_path = output_path.replace(".pkl", f"{serialized_suffix}.pkl")
-                pickle.dump(serialized_tables, open(serialized_path, "wb"))
-
-            overall_timing_stats[dir] = timing_stats
-
-    overall_timing_stats["overall"] = {
-        "total_tables": total_tables,
-        "total_inference_time": total_inference_time,
-        "avg_time_per_table": total_inference_time / total_tables if total_tables > 0 else 0
-    }
-
-    # Save timing stats
-    suffix = f"_{variant}" if variant else "_original"
-    timing_file = f"vectors/starmie/{base_benchmark}/timing_stats{suffix}.json"
-    os.makedirs(os.path.dirname(timing_file), exist_ok=True)
-    with open(timing_file, 'w') as f:
-        json.dump(overall_timing_stats, f, indent=4)
-
-    print("Benchmark: ", dataFolder)
-    print("--- Total Inference Time: %s seconds ---" % (total_inference_time))
-    print(f"--- Average Time per Table: {total_inference_time / total_tables:.2f} seconds ---")
+        print(f"=== Completed processing with {ao} ===")
+        print("Benchmark: ", dataFolder)
+        print("--- Total Inference Time: %s seconds ---" % (total_inference_time))
+        print(f"--- Average Time per Table: {total_inference_time / total_tables:.2f} seconds ---")
 
