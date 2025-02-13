@@ -9,20 +9,36 @@ import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
 import argparse
 import sys
-
+import time
+import re
 
 current_dir = Path(__file__).parent
 parent_dir = current_dir.parent
 sys.path.append(str(parent_dir))
 
-# Import your searchers
+# Import only the allowed searchers
 from naive_search import NaiveSearcher
 from lsh_search import LSHSearcher
 from hnsw_search import HNSWSearcher
+from faiss_search import FaissSearcher
+from cluster_search import ClusterSearcher
+from fusion_search import FusionSearcher
 from checkPrecisionRecall import calcMetrics, loadDictionaryFromPickleFile
 
+def normalize_table_name(table_name):
+    """
+    Normalize a table name by removing all directory components.
+    This function splits the string on both forward (/) and backslashes (\)
+    and returns only the file name.
 
-def setup_directories(benchmark):
+    For example:
+      "datalake\\purchasing_card_a.csv" or "datalake/purchasing_card_a.csv"
+    will both return "purchasing_card_a.csv".
+    """
+    # Split the string on both forward and back slashes and return the last element.
+    return re.split(r'[\\/]', table_name)[-1]
+
+def setup_directories(benchmark): 
     """Create output directory structure for the benchmark"""
     base_dir = Path(f"output/{benchmark}")
     base_dir.mkdir(parents=True, exist_ok=True)
@@ -30,7 +46,6 @@ def setup_directories(benchmark):
 
 def load_embeddings(benchmark, ao=None):
     """Load query and datalake embeddings for a benchmark from the starmie directory"""
-    # Add ao to base path if provided
     if ao:
         base_path = Path(f"vectors/starmie/{benchmark}/{ao}")
     else:
@@ -60,21 +75,22 @@ def load_table_structure(table_path):
     try:
         df = pd.read_csv(table_path)
         return list(df.columns)
-    except:
+    except Exception:
         return None
 
-def load_serializations(benchmark):
+def load_serializations(benchmark, ao=None):
     """Load serialized strings for original and p-col variants"""
-    base_path = Path(f"vectors/starmie/{benchmark}")
+    if ao:
+        base_path = Path(f"vectors/starmie/{benchmark}/{ao}")
+    else:
+        base_path = Path(f"vectors/starmie/{benchmark}")
     
     serializations = {}
-    # Load original serializations
     orig_path = base_path / "datalake_vectors_serialized.pkl"
     if orig_path.exists():
         with open(orig_path, 'rb') as f:
             serializations["original"] = pickle.load(f)
             
-    # Load p-col serializations
     pcol_path = base_path / "datalake_vectors_p-col_serialized.pkl"
     if pcol_path.exists():
         with open(pcol_path, 'rb') as f:
@@ -82,23 +98,19 @@ def load_serializations(benchmark):
             
     return serializations
 
-def calculate_detailed_similarity_metrics(original_embeddings, variant_embeddings, data_dir, variant, benchmark):
+def calculate_detailed_similarity_metrics(original_embeddings, variant_embeddings, data_dir, variant, benchmark, ao=None):
     """Calculate column-level similarity metrics between original and variant embeddings"""
     detailed_metrics = {"tables": []}
-    
-    # Load serializations
-    serializations = load_serializations(benchmark)
-    
-    # Create mapping of table IDs to indices
-    orig_indices = {x[0]: i for i,x in enumerate(original_embeddings)}
-    var_indices = {x[0]: i for i,x in enumerate(variant_embeddings)}
+    serializations = load_serializations(benchmark, ao)
+
+    orig_indices = {normalize_table_name(x[0]): i for i, x in enumerate(original_embeddings)}
+    var_indices  = {normalize_table_name(x[0]): i for i, x in enumerate(variant_embeddings)}
     
     for table_id in orig_indices:
         if table_id not in var_indices:
             continue
             
-        # Remove .csv extension for path construction since table_id already includes it
-        table_base = table_id
+        table_base = table_id  # table_id is assumed to be like "311_calls_historic_data_0.csv"
         orig_path = Path("data") / benchmark / "datalake" / table_base
         var_path = None
         if variant == "original":
@@ -111,34 +123,27 @@ def calculate_detailed_similarity_metrics(original_embeddings, variant_embedding
 
         orig_columns = load_table_structure(orig_path)
         var_columns = load_table_structure(var_path)
-        
         if not orig_columns or not var_columns:
             continue
 
         orig_embeddings_table = original_embeddings[orig_indices[table_id]][1]
         var_embeddings_table = variant_embeddings[var_indices[table_id]][1]
-        
         if len(orig_embeddings_table) != len(var_embeddings_table):
             continue
 
         cos_sim = cosine_similarity(orig_embeddings_table, var_embeddings_table)
-        
         column_similarities = []
         euclidean_distances = []
         cosine_similarities = []
         
-        # Attempt to match columns by name. If column_name doesn't appear in var_columns, skip.
         for col_name in orig_columns:
             if col_name in var_columns:
                 orig_idx = orig_columns.index(col_name)
                 var_idx = var_columns.index(col_name)
-                
                 orig_emb = orig_embeddings_table[orig_idx]
                 var_emb = var_embeddings_table[var_idx]
-                
                 cos_sim_val = float(cos_sim[orig_idx][var_idx])
                 euc_dist = float(np.linalg.norm(orig_emb - var_emb))
-                
                 column_similarities.append({
                     "column_name": col_name,
                     "original_position": orig_idx,
@@ -146,13 +151,12 @@ def calculate_detailed_similarity_metrics(original_embeddings, variant_embedding
                     "euclidean_distance": euc_dist,
                     "cosine_similarity": cos_sim_val
                 })
-                
                 euclidean_distances.append(euc_dist)
                 cosine_similarities.append(cos_sim_val)
         
         if column_similarities:
             table_metrics = {
-                "table_name": table_id,
+                "table_name": normalize_table_name(table_id),
                 "num_columns": len(orig_columns),
                 "column_similarities": column_similarities,
                 "aggregate_metrics": {
@@ -168,48 +172,60 @@ def calculate_detailed_similarity_metrics(original_embeddings, variant_embedding
     
     return detailed_metrics
 
-def instantiate_searcher(searcher_type, table_path, scale=1.0):
-    """Create appropriate searcher instance with correct parameters"""
-    if searcher_type == 'hnsw':
-        index_path = table_path.replace('.pkl', '_index.bin')
-        return HNSWSearcher(table_path, index_path, scale)
-    elif searcher_type == 'lsh':
-        # Add LSH-specific parameters
-        hash_func_num = 16  # Default from original code
-        hash_table_num = 100  # Default from original code
-        return LSHSearcher(table_path, hash_func_num, hash_table_num, scale)
-    elif searcher_type == 'naive':
+def instantiate_searcher(searcher_type, table_path, scale=1.0, pooling='mean'):
+    """Create appropriate searcher instance with allowed types:
+       naive, bounds, hnsw, lsh, faiss, cluster, fusion.
+       If searcher type is 'faiss', the pooling parameter is passed.
+    """
+    if searcher_type in ['naive', 'bounds']:
         return NaiveSearcher(table_path, scale)
+    elif searcher_type == 'lsh':
+        hash_func_num = 16
+        hash_table_num = 100
+        return LSHSearcher(table_path, hash_func_num, hash_table_num, scale)
+    elif searcher_type == 'hnsw':
+        index_path = table_path + "_hnsw.index"
+        return HNSWSearcher(table_path, index_path, scale)
+    elif searcher_type == 'faiss':
+        return FaissSearcher(table_path, scale=scale, pooling=pooling)
+    elif searcher_type == 'cluster':
+        return ClusterSearcher(table_path, scale=scale)
+    elif searcher_type == 'fusion':
+        return FusionSearcher(table_path, scale=scale)
     else:
-        return NaiveSearcher(table_path, scale)  # bounds uses same searcher
+        raise ValueError("Unknown searcher type: " + searcher_type)
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate benchmark with specified searcher, and compute similarity metrics")
     parser.add_argument("benchmark", 
-                       choices=['santos', 'tus', 'tusLarge', 'pylon'],
-                       help="Benchmark to evaluate")
+                        choices=['santos', 'tus', 'tusLarge', 'pylon'],
+                        help="Benchmark to evaluate")
     parser.add_argument("--searcher_type",
-                       choices=['naive', 'bounds', 'hnsw', 'lsh'],
-                       default='bounds',
-                       help="Type of searcher to use (naive, bounds, hnsw, lsh)")
+                        choices=['naive', 'bounds', 'hnsw', 'lsh', 'faiss', 'cluster', 'fusion'],
+                        default='bounds',
+                        help="Type of searcher to use")
     parser.add_argument("--distances_only",
-                       action="store_true",
-                       help="Only recalculate raw distances without redoing evaluation")
+                        action="store_true",
+                        help="Only recalculate raw distances without redoing evaluation")
     parser.add_argument("--data_dir",
-                       type=str,
-                       default=None,
-                       help="Optional: Override default data directory path")
+                        type=str,
+                        default=None,
+                        help="Optional: Override default data directory path")
     parser.add_argument("--ao", type=str, choices=['default', 'shuffle_col'], default='default',
-                       help="Augmentation option to evaluate")
+                        help="Augmentation option to evaluate")
+    parser.add_argument("--pooling",
+                        choices=['mean', 'max', 'None'],
+                        default='None',
+                        help="Pooling method for FAISS searcher. Use 'None' for no aggregation (column-level).")
     args = parser.parse_args()
 
+    pooling_value = None if args.pooling == "None" else args.pooling
+
     if args.data_dir:
-        # If user provided a custom data_dir, adjust paths accordingly
         data_path = Path(args.data_dir)
     else:
         data_path = Path(f"data/{args.benchmark}")
 
-    # Parameters for each benchmark
     params = {
         'santos': {
             'max_k': 10, 
@@ -253,7 +269,6 @@ def main():
         }
     }[args.benchmark]
 
-    # Determine the appropriate ao based on benchmark and args
     if args.ao == 'default':
         if args.benchmark in ['santos', 'pylon']:
             ao = 'drop_col'
@@ -267,12 +282,10 @@ def main():
     base_vectors_path = Path(f"vectors/starmie/{args.benchmark}/{ao}")
     gt_path = data_path / "benchmark.pkl"
 
-    # Load embeddings with specific ao
+    # Load embeddings with augmentation option
     queries, datalake_embeddings = load_embeddings(args.benchmark, ao)
-
     variants = list(datalake_embeddings.keys())
     
-    # Before doing anything else, if we have both original and p-col, produce starmie_distances.json
     if "original" in variants and "p-col" in variants:
         original_datalake = datalake_embeddings["original"]
         variant_datalake = datalake_embeddings["p-col"]
@@ -281,24 +294,21 @@ def main():
             variant_datalake,
             data_path,
             "p-col",
-            args.benchmark
+            args.benchmark,
+            ao
         )
-        # Save starmie_distances.json with ao in filename
         distances_file = f'starmie_distances_{ao}.json'
         with open(output_dir / distances_file, 'w') as f:
             json.dump(detailed_metrics, f, indent=2)
         print(f"Distances computed and saved to {distances_file}")
 
-    # If --distances_only is specified, we skip the evaluation and return now
     if args.distances_only:
         return
 
-    # If we reach here, we are doing evaluation
     if queries is None:
         print("No query embeddings found. Cannot proceed with evaluation.")
         return
 
-    # Possibly sample queries
     if params['sample_size'] is not None and params['sample_size'] < len(queries):
         np.random.seed(42)
         indices = np.random.choice(len(queries), size=params['sample_size'], replace=False)
@@ -306,47 +316,48 @@ def main():
 
     # Evaluate each variant and save metrics
     for variant in variants:
-        # Load datalake embeddings for this variant
-        datalake_variant = datalake_embeddings[variant]
-        
         temp_path = base_vectors_path / ("datalake_vectors.pkl" if variant == "original" else f"datalake_vectors_{variant}.pkl")
         if not temp_path.exists():
             print(f"Warning: {temp_path} does not exist, but embeddings were loaded. Skipping {variant}.")
             continue
 
-        searcher = instantiate_searcher(args.searcher_type, str(temp_path), scale=params['scale'])
+        # Start overall timing (index build + query search)
+        variant_start_time = time.time()
 
-        # Perform search
+        if args.searcher_type == 'faiss':
+            searcher = instantiate_searcher(args.searcher_type, str(temp_path), scale=params['scale'], pooling=pooling_value)
+        else:
+            searcher = instantiate_searcher(args.searcher_type, str(temp_path), scale=params['scale'])
+
         returnedResults = {}
+        total_query_time = 0.0
+        num_queries = len(queries)
         for query in tqdm(queries, desc=f"Processing queries ({variant})", unit="query"):
-            if args.searcher_type in ['lsh', 'hnsw']:
-                # Use N=50 for LSH/HNSW as in original code
-                search_results, _ = searcher.topk(
-                    enc=params['encoder'],
-                    query=query,
-                    K=params['max_k'],
-                    N=50,  # Important parameter from original code
-                    threshold=params['threshold']
-                )
-            elif args.searcher_type == 'bounds':
+            query_start = time.time()
+            if args.searcher_type == 'bounds':
                 search_results = searcher.topk_bounds(
                     enc=params['encoder'],
                     query=query,
                     K=params['max_k'], 
                     threshold=params['threshold']
                 )
-            else:  # naive
-                search_results = searcher.topk(
+            else:
+                search_results, _ = searcher.topk(
                     enc=params['encoder'],
                     query=query,
-                    K=params['max_k'], 
+                    K=params['max_k'],
+                    # N=50,
                     threshold=params['threshold']
                 )
-            
-            # Store all top-k results
-            returnedResults[query[0]] = [r[1] for r in search_results]
+            query_end = time.time()
+            total_query_time += (query_end - query_start)
+            returnedResults[normalize_table_name(query[0])] = [normalize_table_name(r[1]) for r in search_results]
 
-        # Calculate metrics
+        variant_end_time = time.time()
+        overall_variant_time = variant_end_time - variant_start_time
+        avg_query_time = total_query_time / num_queries if num_queries > 0 else 0.0
+        print(f"Variant '{variant}' using '{args.searcher_type}': Avg query time: {avg_query_time:.8f} sec; Overall time: {overall_variant_time:.8f} sec")
+
         metrics = calcMetrics(
             max_k=params['max_k'],
             k_range=params['k_range'],
@@ -356,11 +367,20 @@ def main():
             verbose=False
         )
 
-        # Modify metrics filename to include ao
-        metrics_filename = f"starmie_metrics_{variant}_{args.searcher_type}_{ao}.json"
+        # Add timing details into the metrics
+        metrics["search_time"] = {
+            "total_time": float("{:.8f}".format(overall_variant_time)),
+            "avg_query_time": float("{:.8f}".format(avg_query_time))
+        }
+
+        if args.searcher_type == 'faiss':
+            pooling_label = pooling_value if pooling_value is not None else "col"
+            metrics_filename = f"starmie_metrics_{variant}_{args.searcher_type}_{ao}_{pooling_label}.json"
+        else:
+            metrics_filename = f"starmie_metrics_{variant}_{args.searcher_type}_{ao}.json"
+        
         with open(output_dir / metrics_filename, 'w') as f:
             json.dump(metrics, f, indent=2)
-
         print(f"Metrics saved to {metrics_filename}")
 
     print(f"Evaluation and distance calculations completed successfully for {ao}")

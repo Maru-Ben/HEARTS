@@ -1,14 +1,14 @@
 #!/bin/bash
 
 benchmarks=(
-    "pylon"
-    "pylon-p-col"
     "santos"
     "santos-p-col"
-    "tus"
-    "tus-p-col"
-    "tusLarge"
-    "tusLarge-p-col"
+    # "pylon"
+    # "pylon-p-col"
+    # "tus"
+    # "tus-p-col"
+    # "tusLarge"
+    # "tusLarge-p-col"
 )
 
 for benchmark in "${benchmarks[@]}"; do

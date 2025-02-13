@@ -1,16 +1,18 @@
-python scripts/starmie/extractVectors.py \
---benchmark santos \
---table_order column \
---run_id 0 \
---return_serialized \
---save_model
+# python scripts/starmie/extractVectors.py \
+# --benchmark santos \
+# --table_order column \
+# --run_id 0 \
+# --return_serialized \
+# --save_model
 
-python scripts/starmie/extractVectors.py \
---benchmark santos-p-col \
---table_order column \
---run_id 0 \
---return_serialized \
---save_model
+# python scripts/starmie/extractVectors.py \
+# --benchmark santos-p-col \
+# --table_order column \
+# --run_id 1 \
+# --return_serialized \
+# --save_model
+
+
 
 
 # python scripts/starmie/extractVectors.py \
@@ -20,13 +22,12 @@ python scripts/starmie/extractVectors.py \
 # --return_serialized \
 # --save_model
 
-
-# python scripts/starmie/extractVectors.py \
-# --benchmark tus-p-col \
-# --table_order column \
-# --run_id 0 \
-# --return_serialized \
-# --save_model
+python scripts/starmie/extractVectors.py \
+--benchmark tus-p-col \
+--table_order column \
+--run_id 0 \
+--return_serialized \
+--save_model
 
 
 
@@ -43,6 +44,8 @@ python scripts/starmie/extractVectors.py \
 # --run_id 0 \
 # --return_serialized \
 # --save_model
+
+
 
 # python scripts/starmie/extractVectors.py \
 # --benchmark pylon \

@@ -9,7 +9,7 @@ import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
 import argparse
 import sys
-
+import time
 
 current_dir = Path(__file__).parent
 parent_dir = current_dir.parent
@@ -19,7 +19,12 @@ sys.path.append(str(parent_dir))
 from naive_search import NaiveSearcher
 from lsh_search import LSHSearcher
 from hnsw_search import HNSWSearcher
+from faiss_search import FaissSearcher
+from cluster_search import ClusterSearcher
 from checkPrecisionRecall import calcMetrics, loadDictionaryFromPickleFile
+
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning, message=".*force_all_finite.*")
 
 
 def setup_directories(benchmark, model_type):
@@ -64,8 +69,8 @@ def calculate_detailed_similarity_metrics(original_embeddings, variant_embedding
     detailed_metrics = {"tables": []}
 
     # Create mapping of table IDs to indices
-    orig_indices = {x[0]: i for i,x in enumerate(original_embeddings)}
-    var_indices = {x[0]: i for i,x in enumerate(variant_embeddings)}
+    orig_indices = {x[0]: i for i, x in enumerate(original_embeddings)}
+    var_indices = {x[0]: i for i, x in enumerate(variant_embeddings)}
     
     for table_id in orig_indices:
         if table_id not in var_indices:
@@ -104,7 +109,7 @@ def calculate_detailed_similarity_metrics(original_embeddings, variant_embedding
             if col_name in var_columns:
                 orig_idx = orig_columns.index(col_name)
                 var_idx = var_columns.index(col_name)
-                
+
                 orig_emb = orig_embeddings_table[orig_idx]
                 var_emb = var_embeddings_table[var_idx]
                 
@@ -124,7 +129,7 @@ def calculate_detailed_similarity_metrics(original_embeddings, variant_embedding
         
         if column_similarities:
             table_metrics = {
-                "table_name": table_id+".csv",
+                "table_name": table_id + ".csv",
                 "num_columns": len(orig_columns),
                 "column_similarities": column_similarities,
                 "aggregate_metrics": {
@@ -136,55 +141,68 @@ def calculate_detailed_similarity_metrics(original_embeddings, variant_embedding
     
     return detailed_metrics
 
-def instantiate_searcher(searcher_type, datalake_path, scale=1.0):
+def instantiate_searcher(searcher_type, datalake_path, scale=1.0, pooling='mean'):
     """Instantiate the chosen searcher class"""
     if searcher_type == 'naive':
         return NaiveSearcher(datalake_path, scale)
     elif searcher_type == 'bounds':
-        # Use the same NaiveSearcher but call topk_bounds instead of topk
-        # We'll handle calling topk or topk_bounds below
         return NaiveSearcher(datalake_path, scale)
     elif searcher_type == 'lsh':
-        # lsh requires hash_func_num, hash_table_num
-        hash_func_num = 10
-        hash_table_num = 10
+        hash_func_num = 16
+        hash_table_num = 100
         return LSHSearcher(datalake_path, hash_func_num, hash_table_num, scale)
     elif searcher_type == 'hnsw':
-        # hnsw requires index_path
         index_path = datalake_path + "_hnsw.index"
         return HNSWSearcher(datalake_path, index_path, scale)
+    elif searcher_type == 'faiss':
+        return FaissSearcher(datalake_path, scale, pooling=pooling)
+    elif searcher_type == 'cluster':
+        return ClusterSearcher(datalake_path, scale=scale)
+    elif searcher_type == 'fusion':
+        # New creative fusion searcher
+        from fusion_search import FusionSearcher
+        return FusionSearcher(datalake_path, scale=scale)
     else:
         raise ValueError(f"Unknown searcher type: {searcher_type}")
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate benchmark with specified model and searcher, and compute similarity metrics")
+    parser = argparse.ArgumentParser(
+        description="Evaluate benchmark with specified model and searcher, and compute similarity metrics"
+    )
     parser.add_argument("benchmark", 
-                       choices=['santos', 'tus', 'tusLarge', 'pylon'],
-                       help="Benchmark to evaluate")
+                        choices=['santos', 'tus', 'tusLarge', 'pylon'],
+                        help="Benchmark to evaluate")
     parser.add_argument("--model_type", 
-                       choices=['pretrained', 'finetuned', 'scratch', 'lora'],
-                       required=True,
-                       help="Model type to evaluate (pretrained, finetuned, scratch, lora)")
+                        choices=['pretrained', 'finetuned', 'scratch', 'lora'],
+                        required=True,
+                        help="Model type to evaluate (pretrained, finetuned, scratch, lora)")
     parser.add_argument("--searcher_type",
-                       choices=['naive', 'bounds', 'hnsw', 'lsh'],
-                       default='bounds',
-                       help="Type of searcher to use (naive, bounds, hnsw, lsh)")
+                        choices=['naive', 'bounds', 'hnsw', 'lsh', 'faiss', 'cluster', 'fusion'],
+                        default='bounds',
+                        help="Type of searcher to use (naive, bounds, hnsw, lsh, faiss, cluster)")
     parser.add_argument("--distances_only",
-                       action="store_true",
-                       help="Only recalculate raw distances without redoing evaluation")
+                        action="store_true",
+                        help="Only recalculate raw distances without redoing evaluation")
     parser.add_argument("--data_dir",
-                       type=str,
-                       default=None,
-                       help="Optional: Override default data directory path")
+                        type=str,
+                        default=None,
+                        help="Optional: Override default data directory path")
+    # New argument for pooling method, used only when using the FAISS searcher.
+    parser.add_argument("--pooling",
+                        choices=['mean', 'max', 'None'],
+                        default='mean',
+                        help="Pooling method for FAISS searcher. Use 'None' for no aggregation (column-level).")
     args = parser.parse_args()
 
+    # Convert string "None" to actual None if applicable.
+    pooling_value = None if args.pooling == "None" else args.pooling
+
     if args.data_dir:
-        # If user provided a custom data_dir, adjust paths accordingly
         data_path = Path(args.data_dir)
     else:
         data_path = Path(f"data/{args.benchmark}")
 
-    # Parameters for each benchmark
     params = {
         'santos': {
             'max_k': 10, 
@@ -235,9 +253,10 @@ def main():
     # Load embeddings
     queries, datalake_embeddings = load_embeddings(args.benchmark, args.model_type)
 
-    variants = list(datalake_embeddings.keys())  # could be ['original', 'p-col'] if p-col is available
+    # Determine which variants are available (e.g., original and/or p-col)
+    variants = list(datalake_embeddings.keys())
     
-    # Before doing anything else, if we have both original and p-col, produce hytrel_distances.json
+    # If both variants are available, produce hytrel_distances.json for comparison
     if "original" in variants and "p-col" in variants:
         original_datalake = datalake_embeddings["original"]
         variant_datalake = datalake_embeddings["p-col"]
@@ -248,41 +267,45 @@ def main():
             "p-col",
             args.benchmark
         )
-        # Save hytrel_distances.json
         with open(output_dir / 'hytrel_distances.json', 'w') as f:
             json.dump(detailed_metrics, f, indent=2)
-        print(f"Distances computed and saved to hytrel_distances.json")
+        print("Distances computed and saved to hytrel_distances.json")
 
-    # If --distances_only is specified, we skip the evaluation and return now
     if args.distances_only:
         return
 
-    # If we reach here, we are doing evaluation
     if queries is None:
         print("No query embeddings found. Cannot proceed with evaluation.")
         return
 
-    # Possibly sample queries
     if params['sample_size'] is not None and params['sample_size'] < len(queries):
         np.random.seed(42)
         indices = np.random.choice(len(queries), size=params['sample_size'], replace=False)
         queries = [queries[i] for i in indices]
 
-    # Evaluate each variant and save metrics
+    # Evaluate each variant and save metrics, including timing details.
     for variant in variants:
-        # Load datalake embeddings for this variant
         datalake_variant = datalake_embeddings[variant]
-        
         temp_path = base_vectors_path / ("datalake_vectors.pkl" if variant == "original" else f"datalake_vectors_{variant}.pkl")
         if not temp_path.exists():
             print(f"Warning: {temp_path} does not exist, but embeddings were loaded. Skipping {variant}.")
             continue
 
-        searcher = instantiate_searcher(args.searcher_type, str(temp_path), scale=params['scale'])
+        # Mark overall start time (includes index building and query search)
+        variant_start_time = time.time()
 
-        # Perform search
+        if args.searcher_type == 'faiss':
+            searcher = instantiate_searcher(args.searcher_type, str(temp_path), scale=params['scale'], pooling=pooling_value)
+        elif args.searcher_type == 'cluster':
+            searcher = instantiate_searcher(args.searcher_type, str(temp_path), scale=params['scale'])
+        else:
+            searcher = instantiate_searcher(args.searcher_type, str(temp_path), scale=params['scale'])
+
         returnedResults = {}
+        total_query_time = 0.0
+        num_queries = len(queries)
         for query in tqdm(queries, desc=f"Processing queries ({variant})", unit="query"):
+            query_start = time.time()
             if args.searcher_type == 'bounds':
                 search_results = searcher.topk_bounds(
                     enc=params['encoder'],
@@ -290,9 +313,8 @@ def main():
                     K=params['max_k'], 
                     threshold=params['threshold']
                 )
-            elif args.searcher_type in ['naive', 'lsh', 'hnsw']:
-                # lsh and hnsw topk returns two values (results and scoreLength), naive returns one
-                if args.searcher_type in ['lsh', 'hnsw']:
+            elif args.searcher_type in ['naive', 'lsh', 'hnsw', 'faiss', 'cluster', 'fusion']:
+                if args.searcher_type in ['lsh', 'hnsw', 'faiss', 'cluster', 'fusion']:
                     search_results, _ = searcher.topk(
                         enc=params['encoder'],
                         query=query,
@@ -308,10 +330,15 @@ def main():
                     )
             else:
                 raise ValueError(f"Unsupported searcher_type: {args.searcher_type}")
-            
+            query_end = time.time()
+            total_query_time += (query_end - query_start)
             returnedResults[query[0] + '.csv'] = [r[1] + '.csv' for r in search_results]
 
-        # Calculate metrics
+        variant_end_time = time.time()
+        overall_variant_time = variant_end_time - variant_start_time
+        avg_query_time = total_query_time / num_queries if num_queries > 0 else 0.0
+        print(f"Variant '{variant}' using '{args.searcher_type}': Avg query time: {avg_query_time:.8f} sec; Overall time: {overall_variant_time:.8f} sec")
+
         metrics = calcMetrics(
             max_k=params['max_k'],
             k_range=params['k_range'],
@@ -321,8 +348,17 @@ def main():
             verbose=False
         )
 
-        # Save metrics file: hytrel_metrics_{variant}_{searcher_type}.json
-        metrics_filename = f"hytrel_metrics_{variant}_{args.searcher_type}.json"
+        metrics["search_time"] = {
+            "total_time": float("{:.8f}".format(overall_variant_time)),
+            "avg_query_time": float("{:.8f}".format(avg_query_time))
+        }
+
+        if args.searcher_type == 'faiss':
+            pooling_label = pooling_value if pooling_value is not None else "col"
+            metrics_filename = f"hytrel_metrics_{variant}_{args.searcher_type}_{pooling_label}.json"
+        else:
+            metrics_filename = f"hytrel_metrics_{variant}_{args.searcher_type}.json"
+        
         with open(output_dir / metrics_filename, 'w') as f:
             json.dump(metrics, f, indent=2)
 

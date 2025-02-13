@@ -1,0 +1,35 @@
+ujson==5.10.0
+numpy==1.26.4
+tqdm==4.67.1
+spacy==3.8.3
+hnswlib==0.8.0
+scipy==1.15.1
+
+# # python=3.11 for pytorch lightning
+# # pip=24.0
+# pip install torch==2.3.0 --index-url https://download.pytorch.org/whl/cu121
+scikit-learn==1.6.1
+pandas==2.2.3
+tqdm==4.67.1
+loguru==0.7.3
+transformers==4.48.3
+pytorch-lightning==1.9.5
+munkres==1.1.4
+iteration_utilities==0.13.0
+matplotlib==3.10.0
+mlflow==2.20.1
+hdbscan==0.8.40
+xgboost==2.1.4
+umap-learn==0.5.7
+
+# # pip install torch-geometric -f https://data.pyg.org/whl/torch-2.3.0+cu121.html
+# # pip install torch-scatter -f https://data.pyg.org/whl/torch-2.3.0+cu121.html
+
+
+
+# # python -m spacy download en_core_web_sm
+# # pip install torch-sparse -f https://data.pyg.org/whl/torch-2.3.0+cu121.html
+
+# conda install -c pytorch -c nvidia faiss-gpu=1.10.0
+# conda install -c pytorch faiss-cpu=1.10.0
+# pip install https://github.com/daswer123/deepspeed-windows/releases/download/13.1/deepspeed-0.13.1+cu121-cp311-cp311-win_amd64.whl

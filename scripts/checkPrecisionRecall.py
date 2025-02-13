@@ -1,5 +1,4 @@
 import pickle
-import pickle5 as p
 import pandas as pd
 from matplotlib import *
 from matplotlib import pyplot as plt
@@ -13,7 +12,7 @@ def loadDictionaryFromPickleFile(dictionaryPath):
     Return: dictionary from the pickle file
     '''
     filePointer=open(dictionaryPath, 'rb')
-    dictionary = p.load(filePointer)
+    dictionary = pickle.load(filePointer)
     filePointer.close()
     return dictionary
 

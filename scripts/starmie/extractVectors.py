@@ -157,32 +157,37 @@ if __name__ == '__main__':
     dataFolder = hp.benchmark
     isSingleCol = hp.single_column
     base_benchmark, variant = get_base_and_variant(hp.benchmark)
-
-    # Define augmentation options to process
-    augmentation_options = ['shuffle_col']  # Start with shuffle_col
     
-    # Add benchmark-specific ao based on the base benchmark
-    if base_benchmark in ['santos', 'wdc', 'pylon', 'ugen_v1', 'ugen_v2']:
-        benchmark_ao = 'drop_col' if not isSingleCol else 'drop_cell'
+    # Set augmentation options and similarity model based on the benchmark.
+    # For santos and pylon: use drop_col and shuffle_col with tfidf_entity.
+    # For tus and tusLarge: use drop_cell and shuffle_col with alphaHead.
+    if base_benchmark in ['santos', 'pylon']:
+        augmentation_options = ['drop_col', 'shuffle_col']
+        sm = 'tfidf_entity'
     elif base_benchmark in ['tus', 'tusLarge']:
-        benchmark_ao = 'drop_cell'
-    
-    augmentation_options.append(benchmark_ao)
+        augmentation_options = ['drop_cell', 'shuffle_col']
+        sm = 'alphaHead'
+    else:
+        # For other benchmarks, you can retain the original logic or set defaults.
+        augmentation_options = ['drop_col']
+        if base_benchmark in ['wdc', 'ugen_v1', 'ugen_v2']:
+            sm = 'tfidf_entity'
+        else:
+            sm = 'tfidf_entity'
 
     # Process for each augmentation option
     for ao in augmentation_options:
         print(f"\n=== Processing with augmentation option: {ao} ===")
         
-        # Set similarity model based on base benchmark
-        if base_benchmark in ['santos', 'wdc', 'pylon', 'ugen_v1', 'ugen_v2']:
-            sm = 'tfidf_entity'
-        elif base_benchmark in ['tus', 'tusLarge']:
-            sm = 'tfidf_entity' if base_benchmark == 'tusLarge' else 'alphaHead'
+        # For shuffle_col versions, always override run_id to 1.
+        if ao == "shuffle_col":
+            run_id = 1
+        else:
+            run_id = 0
 
-        run_id = hp.run_id
         table_order = hp.table_order
 
-        # Modify model path to include augmentation option
+        # Modify model path to include augmentation option.
         model_path = f"checkpoints/starmie/{base_benchmark}/model_{ao}_{sm}_{table_order}_{run_id}.pt"
         ckpt = torch.load(model_path, map_location=torch.device('cuda'))
         model, trainset = load_checkpoint(ckpt)
@@ -277,4 +282,3 @@ if __name__ == '__main__':
         print("Benchmark: ", dataFolder)
         print("--- Total Inference Time: %s seconds ---" % (total_inference_time))
         print(f"--- Average Time per Table: {total_inference_time / total_tables:.2f} seconds ---")
-

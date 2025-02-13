@@ -79,7 +79,9 @@ class EmbeddingGenerator:
                 logger.info("Detected LoRA checkpoint, merging weights...")
                 for k, v in state_dict.items():
                     if 'base_layer' not in k and 'lora' not in k:
-                        if k.startswith('module.model.'):
+                        if k.startswith('_forward_module.model.'):
+                            name = k[22:]
+                        elif k.startswith('module.model.'):
                             name = k[13:]
                         elif k.startswith('model.'):
                             name = k[6:]
@@ -91,7 +93,9 @@ class EmbeddingGenerator:
                 for k, v in state_dict.items():
                     if 'base_layer' in k:
                         base_name = k.replace('.base_layer', '')
-                        if base_name.startswith('module.model.'):
+                        if base_name.startswith('_forward_module.model.'):
+                            base_name = base_name[22:]
+                        elif base_name.startswith('module.model.'):
                             base_name = base_name[13:]
                         elif base_name.startswith('model.'):
                             base_name = base_name[6:]
@@ -119,13 +123,22 @@ class EmbeddingGenerator:
                     # DeepSpeed format
                     for k, v in state_dict['module'].items():
                         if 'model' in k:
-                            name = k[13:]  # remove `module.model.`
+                            if k.startswith('_forward_module.model.'):
+                                name = k[22:]
+                            elif k.startswith('module.model.'):
+                                name = k[13:]
+                            elif k.startswith('model.'):
+                                name = k[6:]
+                            else:
+                                name = k
                             new_state_dict[name] = v
                     logger.info("Loaded DeepSpeed checkpoint")
                 except KeyError:
                     # Regular format
                     for k, v in state_dict.items():
-                        if k.startswith('module.model.'):
+                        if k.startswith('_forward_module.model.'):
+                            name = k[22:]
+                        elif k.startswith('module.model.'):
                             name = k[13:]
                         elif k.startswith('model.'):
                             name = k[6:]
@@ -133,7 +146,7 @@ class EmbeddingGenerator:
                             name = k
                         new_state_dict[name] = v
                     logger.info("Loaded regular checkpoint")
-                    
+                        
             missing_keys, unexpected_keys = self.model.load_state_dict(new_state_dict, strict=False)
             
             if missing_keys:
@@ -146,6 +159,9 @@ class EmbeddingGenerator:
         except Exception as e:
             logger.error(f"Error loading checkpoint: {str(e)}")
             raise
+
+
+
 
     def _tokenize_word(self, word: str) -> Tuple[List[str], List[int]]:
         number_pattern = re.compile(r"(\d+)\.?(\d*)")
@@ -169,7 +185,7 @@ class EmbeddingGenerator:
         wordpieces += ['[PAD]'] * (128 - len(wordpieces))
         return wordpieces, mask
 
-    def _table2graph_columns_only(self, df: pd.DataFrame, max_rows=100, max_cols=100) -> BipartiteData:
+    def _table2graph_columns_only(self, df: pd.DataFrame, max_rows=50, max_cols=20) -> BipartiteData:
         max_token_length = 128
         pad_sequence = ['[PAD]'] * max_token_length
         default_mask = [0] * max_token_length
@@ -251,7 +267,7 @@ class EmbeddingGenerator:
     def extract_columns(self, outputs: torch.Tensor, num_cols: int) -> torch.Tensor:
         return outputs[1][1:num_cols+1]
 
-    def process_directory(self, csv_dir, output_vectors_path, batch_size=4, max_rows=100, max_cols=100):
+    def process_directory(self, csv_dir, output_vectors_path, batch_size=4, max_rows=50, max_cols=20):
         logger.info(f"Processing directory: {csv_dir}")
         logger.info(f"Using max_rows={max_rows}, max_cols={max_cols}")
         os.makedirs(os.path.dirname(output_vectors_path), exist_ok=True)
@@ -313,7 +329,7 @@ class EmbeddingGenerator:
 def infer_model_type(checkpoint_path):
     if 'pretrained' in checkpoint_path:
         return 'pretrained'
-    elif 'finetuned' in checkpoint_path:
+    elif 'finetune' in checkpoint_path:
         return 'finetuned'
     elif 'lora' in checkpoint_path:
         return 'lora'
@@ -390,8 +406,8 @@ def main():
     parser = argparse.ArgumentParser(description='Generate embeddings for table columns using HyTrel')
     parser.add_argument('--benchmark', type=str, required=True)
     parser.add_argument('--checkpoint_dir', type=str, required=True)
-    parser.add_argument('--max_rows', type=int, default=100)
-    parser.add_argument('--max_cols', type=int, default=100)
+    parser.add_argument('--max_rows', type=int, default=50)
+    parser.add_argument('--max_cols', type=int, default=50)
     parser.add_argument('--batch_size', type=int, default=1)
     args = parser.parse_args()
 

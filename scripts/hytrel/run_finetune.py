@@ -1,20 +1,26 @@
+#!/usr/bin/env python
+"""
+run_finetune.py
+
+A fine-tuning script for HyTREL. This script loads a pre-trained checkpoint (from a 
+directory structure similar to run_pretrain.py), sets up the data folder for fine-tuning,
+and then trains the model on a (typically smaller) dataset.
+"""
+
 import os
 import sys
-import logging
 import time
-from datetime import datetime
 import json
 import psutil
-try:
-    import nvidia_smi
-    NVIDIA_SMI_AVAILABLE = True
-except ImportError:
-    NVIDIA_SMI_AVAILABLE = False
+import shutil
+from datetime import datetime
+from collections import OrderedDict
 
 import torch
+torch.set_float32_matmul_precision('high')
+
 import torch.nn as nn
 from torch.optim import Adam
-from collections import OrderedDict
 
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -27,62 +33,68 @@ from transformers.optimization import AdamW, get_scheduler
 from dataclasses import dataclass, field, fields
 from typing import Optional
 
+# Import model and data modules
 from model import Encoder, ContrastiveLoss
 from data import TableDataModule
+
+try:
+    import nvidia_smi
+    NVIDIA_SMI_AVAILABLE = True
+except ImportError:
+    NVIDIA_SMI_AVAILABLE = False
+
+################################################################################
+#                             ARGUMENT CLASSES                                 #
+################################################################################
 
 @dataclass
 class DataArguments:
     tokenizer_config_type: str = field(
         default='bert-base-uncased',
-        metadata={
-            "help": "bert-base-cased, bert-base-uncased etc"
-        },
+        metadata={"help": "Tokenizer configuration (e.g., bert-base-uncased)"}
     )
-    data_path: str = field(default='./data/santos/', metadata={"help": "data path"})
+    data_path: str = field(
+        default='./data/santos/',
+        metadata={"help": "Path to the fine-tuning dataset"}
+    )
     max_token_length: int = field(
         default=128,
-        metadata={
-            "help": "The maximum total input token length for cell/caption/header after tokenization."
-        },
+        metadata={"help": "Maximum token length after tokenization"}
     )
     max_row_length: int = field(
-        default=50,
-        metadata={
-            "help": "The maximum total input rows for a table"
-        },
+        default=30,
+        metadata={"help": "Maximum number of rows per table"}
     )
     max_column_length: int = field(
-        default=50,
-        metadata={
-            "help": "The maximum total input columns for a table"
-        },
+        default=20,
+        metadata={"help": "Maximum number of columns per table"}
     )
     num_workers: Optional[int] = field(
         default=8,
-        metadata={"help": "Number of workers for dataloader"},
+        metadata={"help": "Number of workers for dataloader"}
     )
     valid_ratio: float = field(
-        default=0.01,
-        metadata={"help": "Validation split ratio"},
+        default=0.1,
+        metadata={"help": "Validation split ratio"}
     )
     seed: int = field(
         default=42,
         metadata={"help": "Random seed"}
     )
     max_epoch: int = field(
-        default=5,
-        metadata={"help": "Maximum number of training epochs"}
+        default=10,
+        metadata={"help": "Maximum number of fine-tuning epochs"}
     )
     electra: bool = field(
         default=False,
-        metadata={"help": "Whether to use ELECTRA objective"}
+        metadata={"help": "Whether to use the ELECTRA objective"}
     )
     mask_ratio: float = field(
         default=0.15,
         metadata={"help": "Masking ratio for training"}
     )
     contrast_bipartite_edge: bool = field(
-        default=False,
+        default=True,
         metadata={"help": "Whether to use contrastive bipartite edge objective"}
     )
     bipartite_edge_corrupt_ratio: float = field(
@@ -90,19 +102,19 @@ class DataArguments:
         metadata={"help": "Corruption ratio for bipartite edges"}
     )
     checkpoint_dir: str = field(
-        default='checkpoints',
-        metadata={"help": "Directory to save checkpoints"}
+        default='checkpoints_finetune',
+        metadata={"help": "Directory to save fine-tuning checkpoints"}
     )
 
 @dataclass
 class OptimizerConfig:
     batch_size: int = field(
-        default=128,
+        default=16,
         metadata={"help": "Training batch size"}
     )
     base_learning_rate: float = field(
-        default=1e-4,
-        metadata={"help": "Base learning rate"}
+        default=1e-5,
+        metadata={"help": "Base learning rate for fine-tuning"}
     )
     weight_decay: float = 0.02
     adam_beta1: float = 0.9
@@ -120,29 +132,49 @@ class OptimizerConfig:
         default=3,
         metadata={"help": "Number of best checkpoints to keep"}
     )
+    # Use the same argument name as in run_pretrain.py for consistency.
     checkpoint_path: str = field(
-        default="",
-        metadata={"help": "Path to pretrained checkpoint for finetuning"}
+        default="checkpoints/hytrel/contrast_pretrained/epoch=4-step=32690.ckpt",
+        metadata={"help": "Path to pre-trained HyTREL checkpoint directory (e.g., ...epoch=4-step=32690.ckpt)"}
     )
 
     @classmethod
-    def dict(self):
-        return {field.name: getattr(self, field.name) for field in fields(self)}
+    def dict(cls):
+        return {field.name: getattr(cls, field.name) for field in fields(cls)}
 
     def get_optimizer(self, optim_groups, learning_rate):
         optimizer = self.optimizer.lower()
-        optim_cls = {
-            "adam": AdamW if self.adam_w_mode else Adam,
-        }[optimizer]
+        optim_cls = {"adam": AdamW if self.adam_w_mode else Adam}[optimizer]
+        kwargs = {"lr": learning_rate, "eps": self.adam_epsilon, "betas": (self.adam_beta1, self.adam_beta2)}
+        return optim_cls(optim_groups, **kwargs)
 
-        kwargs = {
-            "lr": learning_rate,
-            "eps": self.adam_epsilon,
-            "betas": (self.adam_beta1, self.adam_beta2),
-        }
-        optimizer = optim_cls(optim_groups, **kwargs)
-        return optimizer
+################################################################################
+#                           MODEL DEFINITION (PLModule)                          #
+################################################################################
 
+import os
+import time
+import json
+from datetime import datetime
+from collections import OrderedDict
+
+import torch
+import torch.nn as nn
+from torch.optim import Adam
+
+import pytorch_lightning as pl
+from torchmetrics.classification import BinaryPrecision, BinaryRecall, BinaryF1Score, BinaryAccuracy
+from transformers.optimization import get_scheduler
+
+import psutil
+
+try:
+    import nvidia_smi
+    NVIDIA_SMI_AVAILABLE = True
+except ImportError:
+    NVIDIA_SMI_AVAILABLE = False
+
+from model import Encoder, ContrastiveLoss  # Make sure these are correctly imported
 
 class PlModel(pl.LightningModule):
     def __init__(self, model_config, optimizer_cfg):
@@ -164,39 +196,46 @@ class PlModel(pl.LightningModule):
         elif self.model_config.contrast_bipartite_edge:
             self.con_loss = ContrastiveLoss(temperature=0.07)
 
-        # Add training time tracking
         self.epoch_start_time = None
         self.epoch_times = []
         self.peak_gpu_memory = 0
-        
+
+    def on_save_checkpoint(self, checkpoint):
+        """
+        This hook post-processes the checkpoint's state_dict just before saving.
+        It removes the unwanted 'le.model.' prefix from the keys.
+        """
+        new_state_dict = OrderedDict()
+        for key, value in checkpoint['state_dict'].items():
+            if key.startswith("le.model."):
+                new_key = key[len("le.model."):]
+            else:
+                new_key = key
+            new_state_dict[new_key] = value
+        checkpoint['state_dict'] = new_state_dict
+        return checkpoint
+
     def on_train_epoch_start(self):
         self.epoch_start_time = time.time()
-        
+
     def on_train_epoch_end(self):
         epoch_time = time.time() - self.epoch_start_time
         self.epoch_times.append(epoch_time)
-        
-        # Log GPU memory usage
         if torch.cuda.is_available():
-            current_gpu_memory = torch.cuda.max_memory_allocated() / (1024**2)  # Convert to MB
+            current_gpu_memory = torch.cuda.max_memory_allocated() / (1024**2)
             self.peak_gpu_memory = max(self.peak_gpu_memory, current_gpu_memory)
-            
-            # Additional detailed GPU info if nvidia-smi is available
             if NVIDIA_SMI_AVAILABLE:
                 nvidia_smi.nvmlInit()
-                handle = nvidia_smi.nvmlDeviceGetHandleByIndex(0)  # GPU 0
+                handle = nvidia_smi.nvmlDeviceGetHandleByIndex(0)
                 info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
                 gpu_util = nvidia_smi.nvmlDeviceGetUtilizationRates(handle)
-                
                 self.log_dict({
                     'gpu_memory_used_mb': info.used / (1024**2),
                     'gpu_utilization': gpu_util.gpu
                 })
-        
         self.log('epoch_time_seconds', epoch_time)
 
     def on_train_end(self):
-        # Save training statistics
         stats = {
             'training_completed': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'average_epoch_time_seconds': sum(self.epoch_times) / len(self.epoch_times),
@@ -212,8 +251,6 @@ class PlModel(pl.LightningModule):
                 'gpu_names': [torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())] if torch.cuda.is_available() else []
             }
         }
-        
-        # Save to checkpoint directory
         stats_path = os.path.join(self.trainer.logger.log_dir, 'training_stats.json')
         with open(stats_path, 'w') as f:
             json.dump(stats, f, indent=2)
@@ -231,15 +268,14 @@ class PlModel(pl.LightningModule):
             c_lbls = batch.electra_c
             h_lbls = batch.electra_h
             lbls = torch.cat([c_lbls, h_lbls])
-            loss_pos = self.criterion(logits[lbls==1.], lbls[lbls==1.])
-            loss_neg = self.criterion(logits[lbls==0.], lbls[lbls==0.])
+            loss_pos = self.criterion(logits[lbls == 1.], lbls[lbls == 1.])
+            loss_neg = self.criterion(logits[lbls == 0.], lbls[lbls == 0.])
             loss = loss_pos + loss_neg
         elif self.model_config.contrast_bipartite_edge:
             self.model_config.update({'edge_neg_view': 1})
             outputs1 = self.model(batch)
             hyperedge_outputs1 = outputs1[1]
             hyper_embeds1 = torch.index_select(hyperedge_outputs1, 0, torch.nonzero(batch.hyper_mask).squeeze())
-            
             self.model_config.update({'edge_neg_view': 2})
             outputs2 = self.model(batch)
             hyperedge_outputs2 = outputs2[1]
@@ -262,18 +298,16 @@ class PlModel(pl.LightningModule):
             c_lbls = batch.electra_c
             h_lbls = batch.electra_h
             lbls = torch.cat([c_lbls, h_lbls])
-            loss_pos = self.criterion(logits[lbls==1.], lbls[lbls==1.])
-            loss_neg = self.criterion(logits[lbls==0.], lbls[lbls==0.])
+            loss_pos = self.criterion(logits[lbls == 1.], lbls[lbls == 1.])
+            loss_neg = self.criterion(logits[lbls == 0.], lbls[lbls == 0.])
             loss = loss_pos + loss_neg
             self.log("validation_loss", loss, prog_bar=True)
             return {"logits": logits, "labels": lbls}
-        
         elif self.model_config.contrast_bipartite_edge:
             self.model_config.update({'edge_neg_view': 1})
             outputs1 = self.model(batch)
             hyperedge_outputs1 = outputs1[1]
             hyper_embeds1 = torch.index_select(hyperedge_outputs1, 0, torch.nonzero(batch.hyper_mask).squeeze())
-            
             self.model_config.update({'edge_neg_view': 2})
             outputs2 = self.model(batch)
             hyperedge_outputs2 = outputs2[1]
@@ -291,7 +325,6 @@ class PlModel(pl.LightningModule):
             recall = self.rec(probs, labels)
             f1_score = self.f1(probs, labels)
             acc = self.acc(probs, labels)
-            
             self.log_dict({
                 'val_f1': f1_score,
                 'acc': acc,
@@ -302,35 +335,23 @@ class PlModel(pl.LightningModule):
     def configure_optimizers(self):
         from dataclasses import asdict
         self.logger.log_hyperparams(asdict(self.optimizer_cfg))
-        
         learning_rate = self.optimizer_cfg.base_learning_rate
         no_decay = ["bias", "LayerNorm.weight"]
-        params_decay = [
-            p for n, p in self.named_parameters() 
-            if not any(nd in n for nd in no_decay)
-        ]
-        params_nodecay = [
-            p for n, p in self.named_parameters()
-            if any(nd in n for nd in no_decay)
-        ]
-        
+        params_decay = [p for n, p in self.named_parameters() if not any(nd in n for nd in no_decay)]
+        params_nodecay = [p for n, p in self.named_parameters() if any(nd in n for nd in no_decay)]
         optim_groups = [
             {"params": params_decay, "weight_decay": self.optimizer_cfg.weight_decay},
             {"params": params_nodecay, "weight_decay": 0.0},
         ]
-        
         optimizer = self.optimizer_cfg.get_optimizer(optim_groups, learning_rate)
-        
         num_training_steps = len(self.trainer.datamodule.train_dataloader()) * self.trainer.max_epochs
         num_warmup_steps = int(self.optimizer_cfg.warmup_step_ratio * num_training_steps)
-        
         scheduler = get_scheduler(
             self.optimizer_cfg.lr_scheduler_type,
             optimizer,
             num_warmup_steps=num_warmup_steps,
             num_training_steps=num_training_steps,
         )
-        
         return [optimizer], [{
             "scheduler": scheduler,
             "interval": "step",
@@ -339,25 +360,27 @@ class PlModel(pl.LightningModule):
             "monitor": "validation_loss",
         }]
 
+
+################################################################################
+#                         CHECKPOINT FLATTENING UTILITY                          #
+################################################################################
+
 def flatten_deepspeed_checkpoint(root_dir):
     """
-    This function moves DeepSpeed checkpoint files out of the nested .ckpt directories.
-    It looks for 'best.ckpt' and 'last.ckpt', moves their contents directly into 'best/'
-    and 'last/' directories, and removes the unnecessary nesting.
+    Moves DeepSpeed checkpoint files out of nested directories.
+    For example, moves the files from ...epoch=4-step=32690.ckpt/checkpoint/
+    to ...epoch=4-step=32690.ckpt/best/ or similar.
     """
     import shutil
-
     # Handle best checkpoint
     best_ckpt_dir = os.path.join(root_dir, 'best.ckpt')
     if os.path.exists(best_ckpt_dir):
         checkpoint_subdir = os.path.join(best_ckpt_dir, 'checkpoint')
         if os.path.exists(checkpoint_subdir):
-            # Move all files from the checkpoint_subdir to root_dir/best
             best_dir = os.path.join(root_dir, 'best')
             os.makedirs(best_dir, exist_ok=True)
             for f in os.listdir(checkpoint_subdir):
                 shutil.move(os.path.join(checkpoint_subdir, f), best_dir)
-            # Remove the entire best.ckpt directory
             shutil.rmtree(best_ckpt_dir, ignore_errors=True)
 
     # Handle last checkpoint
@@ -365,16 +388,49 @@ def flatten_deepspeed_checkpoint(root_dir):
     if os.path.exists(last_ckpt_dir):
         checkpoint_subdir = os.path.join(last_ckpt_dir, 'checkpoint')
         if os.path.exists(checkpoint_subdir):
-            # Move all files to root_dir/last
             last_dir = os.path.join(root_dir, 'last')
             os.makedirs(last_dir, exist_ok=True)
             for f in os.listdir(checkpoint_subdir):
                 shutil.move(os.path.join(checkpoint_subdir, f), last_dir)
-            # Remove the entire last.ckpt directory
             shutil.rmtree(last_ckpt_dir, ignore_errors=True)
 
 
+def freeze_early_layers(model, freeze_embedding=True, freeze_encoder_layers=True, num_encoder_layers_to_freeze=None):
+    """
+    Freezes parts of the encoder.
+    
+    Parameters:
+      model: the encoder model (instance of Encoder)
+      freeze_embedding (bool): if True, freeze the embedding layer.
+      freeze_encoder_layers (bool): if True, freeze encoder layers.
+      num_encoder_layers_to_freeze (int or None): how many encoder layers to freeze.
+          If None, freeze all but the last encoder layer.
+    """
+    if freeze_embedding:
+        for param in model.embed_layer.parameters():
+            param.requires_grad = False
+        print("Embedding layer frozen.")
+        
+    if freeze_encoder_layers:
+        total_layers = len(model.layer)
+        if num_encoder_layers_to_freeze is None:
+            # Freeze all but the last layer by default.
+            num_encoder_layers_to_freeze = total_layers - 1
+        for i, encoder_layer in enumerate(model.layer):
+            if i < num_encoder_layers_to_freeze:
+                for param in encoder_layer.parameters():
+                    param.requires_grad = False
+                print(f"Encoder layer {i} frozen.")
+            else:
+                print(f"Encoder layer {i} left unfrozen.")
+
+################################################################################
+#                                   MAIN                                       #
+################################################################################
+
 def main():
+    # Set up logging.
+    import logging
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
@@ -383,18 +439,22 @@ def main():
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
 
+    # Parse command-line arguments.
     parser = HfArgumentParser((DataArguments, OptimizerConfig))
     parser = pl.Trainer.add_argparse_args(parser)
-    
     data_args, optimizer_cfg, trainer_args = parser.parse_args_into_dataclasses()
-    
-    # Create checkpoint directory if it doesn't exist
+
+    # Delete the checkpoint directory if it exists.
+    if os.path.exists(data_args.checkpoint_dir):
+        shutil.rmtree(data_args.checkpoint_dir)
+
+    # Create checkpoint directory if it doesn't exist.
     os.makedirs(data_args.checkpoint_dir, exist_ok=True)
-    
-    # Configure tensorboard logger
+
+    # Configure TensorBoard logger.
     tb_logger = TensorBoardLogger(
         save_dir=data_args.checkpoint_dir,
-        name="pretrain",
+        name="finetune",
         default_hp_metric=True
     )
 
@@ -407,12 +467,13 @@ def main():
 
     pl.utilities.seed.seed_everything(data_args.seed)
 
-    # Set up tokenizer and model config
+    # Set up the tokenizer and extend its vocabulary.
     tokenizer = AutoTokenizer.from_pretrained(data_args.tokenizer_config_type)
     new_tokens = ['[TAB]', '[HEAD]', '[CELL]', '[ROW]', "scinotexp"]
     tokenizer.add_tokens(new_tokens)
     logger.info(f"Added new tokens: {new_tokens}")
 
+    # Set up the model configuration.
     model_config = AutoConfig.from_pretrained(data_args.tokenizer_config_type)
     model_config.update({
         'vocab_size': len(tokenizer),
@@ -424,7 +485,7 @@ def main():
     })
     logger.info(f"Model config: {model_config}")
 
-    # Set up data module
+    # Set up the data module.
     data_module = TableDataModule(
         tokenizer=tokenizer,
         data_args=data_args,
@@ -434,35 +495,47 @@ def main():
         objective='electra' if model_config.electra else 'contrast'
     )
 
+    # Initialize the model module.
     if optimizer_cfg.checkpoint_path:
         logger.info(f"Loading checkpoint from {optimizer_cfg.checkpoint_path}")
-        state_dict = torch.load(optimizer_cfg.checkpoint_path, 
-                            map_location='cuda' if torch.cuda.is_available() else 'cpu')
+        # If the checkpoint path is a directory, load the internal state file.
+        if os.path.isdir(optimizer_cfg.checkpoint_path):
+            ckpt_file = os.path.join(optimizer_cfg.checkpoint_path, "checkpoint", "mp_rank_00_model_states.pt")
+        else:
+            ckpt_file = optimizer_cfg.checkpoint_path
+
+        state_dict = torch.load(ckpt_file,
+                                map_location='cuda' if torch.cuda.is_available() else 'cpu')
         new_state_dict = OrderedDict()
         for k, v in state_dict['module'].items():
             if 'model' in k:
-                name = k[13:]  # remove `module.model.`
+                name = k[13:]  # remove "module.model." prefix
                 new_state_dict[name] = v
-        
+
         model_module = PlModel(model_config, optimizer_cfg)
         model_module.model.load_state_dict(new_state_dict, strict=True)
-        
-        # Run initial validation
-        logger.info("Running initial validation with loaded checkpoint...")
-        trainer = pl.Trainer.from_argparse_args(
-            trainer_args,
-            strategy="deepspeed_stage_1",
-            logger=tb_logger,
-            precision='bf16',
-            enable_checkpointing=False,  # Disable checkpointing for validation only
-            max_epochs=0,  # No training, just validation
-        )
-        trainer.validate(model_module, datamodule=data_module)
+        logger.info("Loaded pre-trained weights into the encoder.")
     else:
         model_module = PlModel(model_config, optimizer_cfg)
 
-    # Configure callbacks for best and last checkpoints
-    # This will save best checkpoints under `best.ckpt` directory and last under `last.ckpt`
+    freeze_early_layers(model_module.model, freeze_embedding=False, freeze_encoder_layers=True)
+
+    # ================================================================
+    # Run baseline validation before training starts to establish a baseline.
+    # ================================================================
+    logger.info("Running baseline validation to establish a baseline before training starts...")
+    baseline_trainer = pl.Trainer.from_argparse_args(
+        trainer_args,
+        strategy="deepspeed_stage_1",
+        logger=tb_logger,
+        precision='bf16',
+        enable_checkpointing=False,  # Disable checkpointing during baseline validation
+        max_epochs=0,                # No training; only run validation
+    )
+    baseline_results = baseline_trainer.validate(model_module, datamodule=data_module)
+    logger.info(f"Baseline validation results: {baseline_results}")
+
+    # Configure callbacks for checkpointing.
     best_checkpoint_callback = pl.callbacks.ModelCheckpoint(
         dirpath=data_args.checkpoint_dir,
         filename='best',
@@ -488,19 +561,20 @@ def main():
         pl.callbacks.RichProgressBar(),
     ]
 
+    # Memory tracking callback.
     class MemoryTracker(pl.callbacks.Callback):
         def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
             if torch.cuda.is_available():
                 torch.cuda.reset_peak_memory_stats()
-    
+
     callbacks.append(MemoryTracker())
 
     if trainer_args.gpus == -1:
         trainer_args.gpus = torch.cuda.device_count()
-    
+
     assert trainer_args.replace_sampler_ddp == False, "replace_sampler_ddp must be False for correct data sampling"
 
-    # Initialize trainer
+    # Initialize the trainer.
     trainer = pl.Trainer.from_argparse_args(
         trainer_args,
         strategy="deepspeed_stage_1",
@@ -512,10 +586,10 @@ def main():
         gradient_clip_val=getattr(trainer_args, 'gradient_clip_val', None),
     )
 
-    # Start training
+    # Start fine-tuning.
     trainer.fit(model_module, data_module)
 
-    # After training, flatten the DeepSpeed checkpoint structure
+    # After training, flatten the DeepSpeed checkpoint structure if needed.
     flatten_deepspeed_checkpoint(data_args.checkpoint_dir)
 
 if __name__ == "__main__":

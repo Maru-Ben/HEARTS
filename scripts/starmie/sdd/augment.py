@@ -1,5 +1,6 @@
 import pandas as pd
 import random
+import numpy as np
 
 def augment(table: pd.DataFrame, op: str):
     """Apply an augmentation operator on a table.
@@ -36,7 +37,8 @@ def augment(table: pd.DataFrame, op: str):
         table = table.copy()
         row_idx = random.randint(0, len(table) - 1)
         col_idx = random.randint(0, len(table.columns) - 1)
-        table.iloc[row_idx, col_idx] = ""
+        table.iloc[row_idx, col_idx] = np.nan  # Changed from "" to np.nan
+    
     elif op == 'sample_cells':
         # sample half of the cells randomly
         table = table.copy()
@@ -45,7 +47,8 @@ def augment(table: pd.DataFrame, op: str):
         for _ in range(len(table) // 2 - 1):
             sampleRowIdx.append(random.randint(0, len(table) - 1))
         for ind in sampleRowIdx:
-            table.iloc[ind, col_idx] = ""
+            table.iloc[ind, col_idx] = np.nan  # Changed from "" to np.nan
+
     elif op == 'replace_cells':
         # replace half of the cells randomly with the first values after sorting
         table = table.copy()

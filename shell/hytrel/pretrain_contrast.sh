@@ -1,32 +1,39 @@
 #!/bin/bash
 
-# # Base parameters for all runs
-# BASE_PARAMS="--contrast_bipartite_edge True \
-#     --accelerator gpu \
-#     --devices 1 \
-#     --replace_sampler_ddp False \
-#     --accumulate_grad_batches 4 \
-#     --batch_size 16 \
-#     --save_every_n_epochs 1 \
-#     --save_top_k 1"
+# Base parameters for all runs
+BASE_PARAMS="--contrast_bipartite_edge True \
+    --accelerator gpu \
+    --devices 1 \
+    --replace_sampler_ddp False \
+    --accumulate_grad_batches 4 \
+    --batch_size 16 \
+    --save_every_n_epochs 1 \
+    --save_top_k 1"
 
-# # Checkpoint path for finetuning
-# BASE_CHECKPOINT="./checkpoints/hytrel/contrast_pretrained/epoch=4-step=32690.ckpt/checkpoint/mp_rank_00_model_states.pt"
+# Checkpoint path for finetuning
+BASE_CHECKPOINT="./checkpoints/hytrel/contrast_pretrained/epoch=4-step=32690.ckpt/checkpoint/mp_rank_00_model_states.pt"
 
-# echo "Starting training sequence..."
-# echo "=========================================="
+echo "Starting training sequence..."
+echo "=========================================="
 
-# # Santos Dataset
-# echo "Processing Santos Dataset..."
+# Santos Dataset
+echo "Processing Santos Dataset..."
 
-# echo "1/2: Training Santos from scratch..."
-# CUDA_VISIBLE_DEVICES=0 python -W ignore scripts/hytrel/run_pretrain.py \
-#     --data_path './data/santos/' \
-#     --gradient_clip_val 2.0 \
-#     --base_learning_rate 5e-5 \
-#     --max_epoch 50 \
-#     --checkpoint_dir 'checkpoints/hytrel/santos_contrast_scratch' \
-#     $BASE_PARAMS
+echo "1/2: Training Santos from scratch..."
+CUDA_VISIBLE_DEVICES=0 python -W ignore scripts/hytrel/run_pretrain.py \
+    --data_path './data/santos/' \
+    --gradient_clip_val 2.0 \
+    --base_learning_rate 5e-5 \
+    --max_epoch 50 \
+    --checkpoint_dir 'checkpoints/hytrel/santos_contrast_scratch' \
+    --contrast_bipartite_edge True \
+    --accelerator gpu \
+    --devices 1 \
+    --replace_sampler_ddp False \
+    --accumulate_grad_batches 4 \
+    --batch_size 16 \
+    --save_every_n_epochs 1 \
+    --save_top_k 1
 
 # echo "2/2: Finetuning Santos (classic)..."
 # CUDA_VISIBLE_DEVICES=0 python -W ignore scripts/hytrel/run_pretrain.py \
