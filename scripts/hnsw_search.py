@@ -38,7 +38,7 @@ class HNSWSearcher(object):
         #     # load index
         #     self.index.load_index(index_path, max_elements = len(self.all_columns))
     
-    def topk(self, enc, query, K, N=5, threshold=0.6):
+    def topk(self, enc, query, K, N=50, threshold=0.6):
         # Note: N is the number of columns retrieved from the index
         query_cols = []
         for col in query[1]:

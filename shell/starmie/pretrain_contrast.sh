@@ -64,7 +64,7 @@
 echo "3/4 Training TUS Large"
 CUDA_VISIBLE_DEVICES=0 python scripts/starmie/run_pretrain.py \
   --task tusLarge \
-  --batch_size 32 \
+  --batch_size 64 \
   --lr 5e-5 \
   --lm roberta \
   --n_epochs 10 \
@@ -79,7 +79,7 @@ CUDA_VISIBLE_DEVICES=0 python scripts/starmie/run_pretrain.py \
 
 CUDA_VISIBLE_DEVICES=0 python scripts/starmie/run_pretrain.py \
   --task tusLarge \
-  --batch_size 32 \
+  --batch_size 64 \
   --lr 5e-5 \
   --lm roberta \
   --n_epochs 10 \

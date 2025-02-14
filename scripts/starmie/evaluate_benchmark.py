@@ -26,15 +26,6 @@ from fusion_search import FusionSearcher
 from checkPrecisionRecall import calcMetrics, loadDictionaryFromPickleFile
 
 def normalize_table_name(table_name):
-    """
-    Normalize a table name by removing all directory components.
-    This function splits the string on both forward (/) and backslashes (\)
-    and returns only the file name.
-
-    For example:
-      "datalake\\purchasing_card_a.csv" or "datalake/purchasing_card_a.csv"
-    will both return "purchasing_card_a.csv".
-    """
     # Split the string on both forward and back slashes and return the last element.
     return re.split(r'[\\/]', table_name)[-1]
 
