@@ -1,29 +1,29 @@
 # #!/bin/bash
 
-# echo "Evaluation using pretrained model"
-# python scripts/hytrel/evaluate_benchmark.py santos --model_type pretrained --searcher_type cluster
-# python scripts/hytrel/evaluate_benchmark.py santos --model_type pretrained --searcher_type bounds
-# python scripts/hytrel/evaluate_benchmark.py santos --model_type pretrained --searcher_type lsh
-# python scripts/hytrel/evaluate_benchmark.py santos --model_type pretrained --searcher_type hnsw
-# python scripts/hytrel/evaluate_benchmark.py santos --model_type pretrained --searcher_type faiss --pooling max
-# python scripts/hytrel/evaluate_benchmark.py santos --model_type pretrained --searcher_type faiss --pooling mean
-# python scripts/hytrel/evaluate_benchmark.py santos --model_type pretrained --searcher_type faiss --pooling None
+echo "Evaluation using pretrained model"
+python scripts/hytrel/evaluate_benchmark.py santos --model_type pretrained --searcher_type cluster
+python scripts/hytrel/evaluate_benchmark.py santos --model_type pretrained --searcher_type bounds
+python scripts/hytrel/evaluate_benchmark.py santos --model_type pretrained --searcher_type lsh
+python scripts/hytrel/evaluate_benchmark.py santos --model_type pretrained --searcher_type hnsw
+python scripts/hytrel/evaluate_benchmark.py santos --model_type pretrained --searcher_type faiss --pooling max
+python scripts/hytrel/evaluate_benchmark.py santos --model_type pretrained --searcher_type faiss --pooling mean
+python scripts/hytrel/evaluate_benchmark.py santos --model_type pretrained --searcher_type faiss --pooling None
 
-# python scripts/hytrel/evaluate_benchmark.py tus --model_type pretrained --searcher_type bounds
-# python scripts/hytrel/evaluate_benchmark.py tus --model_type pretrained --searcher_type lsh
-# python scripts/hytrel/evaluate_benchmark.py tus --model_type pretrained --searcher_type hnsw
-# python scripts/hytrel/evaluate_benchmark.py tus --model_type pretrained --searcher_type cluster
-# python scripts/hytrel/evaluate_benchmark.py tus --model_type pretrained --searcher_type faiss --pooling max
-# python scripts/hytrel/evaluate_benchmark.py tus --model_type pretrained --searcher_type faiss --pooling mean
-# python scripts/hytrel/evaluate_benchmark.py tus --model_type pretrained --searcher_type faiss --pooling None
+python scripts/hytrel/evaluate_benchmark.py tus --model_type pretrained --searcher_type bounds
+python scripts/hytrel/evaluate_benchmark.py tus --model_type pretrained --searcher_type lsh
+python scripts/hytrel/evaluate_benchmark.py tus --model_type pretrained --searcher_type hnsw
+python scripts/hytrel/evaluate_benchmark.py tus --model_type pretrained --searcher_type cluster
+python scripts/hytrel/evaluate_benchmark.py tus --model_type pretrained --searcher_type faiss --pooling max
+python scripts/hytrel/evaluate_benchmark.py tus --model_type pretrained --searcher_type faiss --pooling mean
+python scripts/hytrel/evaluate_benchmark.py tus --model_type pretrained --searcher_type faiss --pooling None
 
-# python scripts/hytrel/evaluate_benchmark.py tusLarge --model_type pretrained --searcher_type bounds
-# python scripts/hytrel/evaluate_benchmark.py tusLarge --model_type pretrained --searcher_type lsh
-# python scripts/hytrel/evaluate_benchmark.py tusLarge --model_type pretrained --searcher_type hnsw
-# python scripts/hytrel/evaluate_benchmark.py tusLarge --model_type pretrained --searcher_type cluster
-# python scripts/hytrel/evaluate_benchmark.py tusLarge --model_type pretrained --searcher_type faiss --pooling max
-# python scripts/hytrel/evaluate_benchmark.py tusLarge --model_type pretrained --searcher_type faiss --pooling mean
-# python scripts/hytrel/evaluate_benchmark.py tusLarge --model_type pretrained --searcher_type faiss --pooling None
+python scripts/hytrel/evaluate_benchmark.py tusLarge --model_type pretrained --searcher_type bounds
+python scripts/hytrel/evaluate_benchmark.py tusLarge --model_type pretrained --searcher_type lsh
+python scripts/hytrel/evaluate_benchmark.py tusLarge --model_type pretrained --searcher_type hnsw
+python scripts/hytrel/evaluate_benchmark.py tusLarge --model_type pretrained --searcher_type cluster
+python scripts/hytrel/evaluate_benchmark.py tusLarge --model_type pretrained --searcher_type faiss --pooling max
+python scripts/hytrel/evaluate_benchmark.py tusLarge --model_type pretrained --searcher_type faiss --pooling mean
+python scripts/hytrel/evaluate_benchmark.py tusLarge --model_type pretrained --searcher_type faiss --pooling None
 
 
 
