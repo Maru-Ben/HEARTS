@@ -288,8 +288,8 @@ def process_benchmark(benchmark, generator, args):
     # Handle both original and p-col variants if p-col exists
     variants = ['original']
     dataset_path = os.path.join('data', benchmark)
-    datalake_path = os.path.join(dataset_path, 'datalake')
-    p_col_path = os.path.join(dataset_path, 'datalake-p-col')
+    datalake_path = os.path.join(dataset_path, 'datalake_hytrel')
+    p_col_path = os.path.join(dataset_path, 'datalake_hytrel_p-col')
     query_path = os.path.join(dataset_path, 'query')
 
     if os.path.isdir(p_col_path):
@@ -346,7 +346,7 @@ def main():
     parser.add_argument('--benchmark', type=str, required=True)
     parser.add_argument('--checkpoint_dir', type=str, required=True)
     parser.add_argument('--max_rows', type=int, default=30)
-    parser.add_argument('--max_cols', type=int, default=50)
+    parser.add_argument('--max_cols', type=int, default=20)
     parser.add_argument('--batch_size', type=int, default=1)
     args = parser.parse_args()
 

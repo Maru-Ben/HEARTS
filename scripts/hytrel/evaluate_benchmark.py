@@ -77,11 +77,11 @@ def calculate_detailed_similarity_metrics(original_embeddings, variant_embedding
         if table_id not in var_indices:
             continue
             
-        orig_path = Path("data") / benchmark / "datalake" / f"{table_id}.csv"
+        orig_path = Path("data") / benchmark / "datalake_hytrel" / f"{table_id}.csv"
         if variant == "original":
             var_path = orig_path
         elif variant == "p-col":
-            var_path = Path("data") / benchmark / "datalake-p-col" / f"{table_id}.csv"
+            var_path = Path("data") / benchmark / "datalake_hytrel_p-col" / f"{table_id}.csv"
         else:
             continue
 
