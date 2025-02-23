@@ -1,61 +1,77 @@
-# 1) Setup the environment
-Step 1:
+# HEARTS: Setup Instructions
+
+## 1. Environment Setup
+
+Set up the environment by running the following commands in your terminal:
+
+```bash
+# Create the conda environment using the provided YAML file.
 conda env create -f environment.yml
 
-Step 2:
+# Activate the newly created environment.
 conda activate hearts
 
-Step 3:
+# Run the initial setup script.
 bash setup.sh
+```
 
-# 2) Download the benchmarks & pretrained checkpoints
-You can download the benchmarks used for the evaluation in the poster, as well as the hytrel checkpoint trained with the contrastive loss, and the fasttext pretrained model, directly using download.sh, you can also download each one of them individually through this table : 
+These commands install all required dependencies and configure your environment for the project.
 
-echo "Downloading and extracting the checkpoints"
-mkdir -p checkpoints
+---
 
-echo "1/2 Downloading and extracting HyTrel"
-wget -O checkpoints/hytrel.tar.gz https://nuage.lip6.fr/index.php/s/LW6qQZ4jeNkBNSW/download/hytrel.tar.gz
-tar -xzvf checkpoints/hytrel.tar.gz -C checkpoints
-rm checkpoints/hytrel.tar.gz
+## 2. Download Benchmarks & Pretrained Checkpoints
 
-echo "2/2 Downloading and extracting Fasttext"
-wget -O checkpoints/fasttext.tar.gz https://nuage.lip6.fr/index.php/s/KYYXfGncwiFSKd7/download/fasttext.tar.gz
-tar -xzvf checkpoints/fasttext.tar.gz -C checkpoints
-rm checkpoints/fasttext.tar.gz
+You can download all necessary checkpoints and benchmarks **automatically** using `download.sh` **or manually** from the links below.
+
+### Automatic Download (Recommended)
+
+Simply run:
+
+```bash
+bash download.sh
+```
+
+This script downloads and extracts all resources into their proper directories.
+
+### Manual Download (If Needed)
+
+If you prefer to download files individually, use the table below to access each resource directly. You will need to extract them manually into the correct directories.
+
+#### Checkpoints
+
+| Component   | Description                   | Download Link                                                                                                                         |
+|-------------|-------------------------------|---------------------------------------------------------------------------------------------------------------------------------------|
+| **HyTrel**  | Pretrained HyTrel checkpoint  | [Download HyTrel](https://nuage.lip6.fr/index.php/s/LW6qQZ4jeNkBNSW/download/hytrel.tar.gz)                                          |
+| **Fasttext**| Pretrained Fasttext model     | [Download Fasttext](https://nuage.lip6.fr/index.php/s/KYYXfGncwiFSKd7/download/fasttext.tar.gz)                                        |
+
+#### Benchmarks
+
+| Benchmark    | Description                  | Download Link                                                                                                                         |
+|--------------|------------------------------|---------------------------------------------------------------------------------------------------------------------------------------|
+| **Santos**   | Santos Benchmark             | [Download Santos](https://nuage.lip6.fr/index.php/s/dXZ9fbtXfsptHoZ/download/santos.tar.gz)                                            |
+| **TUS**      | TUS Benchmark                | [Download TUS](https://nuage.lip6.fr/index.php/s/Np5CLbENHWwHrzF/download/tus.tar.gz)                                                  |
+| **TUS Large**| TUS Large Benchmark          | [Download TUS Large](https://nuage.lip6.fr/index.php/s/cJJwtdzW6Nt6ssb/download/tusLarge.tar.gz)                                        |
+| **Wiki-Join**| Wiki-Join Benchmark          | [Download Wiki-Join](https://nuage.lip6.fr/index.php/s/LKWeDCZ9MQcTMCN/download/wiki-join.tar.gz)                                        |
+
+If downloading manually, ensure you extract the files into the correct locations.
+
+---
+
+## 3. Create Column-Shuffled Versions for Table Union Search
+
+To evaluate HEARTS under adversarial conditions—i.e., with columns shuffled randomly—you **must** run the following script **after downloading the datasets**:
+
+```bash
+bash prepare_data.sh
+```
+
+This script will:
+- Generate a shuffled version of each benchmark (stored in directories like `datalake-p-col/`).
+- Create truncated versions for use with HyTrel, saving them in `datalake_hytrel/` and `datalake_hytrel_p-col/`.
+
+This preprocessing is essential because HEARTS requires truncated tables to avoid memory issues due to massive hypergraph representations.
 
 
-echo "Downloading and extracting the benchmarks"
-mkdir -p data
-
-echo "1/4 Downloading and extracting Santos"
-wget -O data/santos.tar.gz https://nuage.lip6.fr/index.php/s/dXZ9fbtXfsptHoZ/download/santos.tar.gz
-tar -xzvf data/santos.tar.gz -C data
-rm data/santos.tar.gz
-
-echo "2/4 Downloading and extracting TUS"
-wget -O data/tus.tar.gz https://nuage.lip6.fr/index.php/s/Np5CLbENHWwHrzF/download/tus.tar.gz
-tar -xzvf data/tus.tar.gz -C data
-rm data/tus.tar.gz
-
-echo "3/4 Downloading and extracting TUS Large"
-wget -O data/tusLarge.tar.gz https://nuage.lip6.fr/index.php/s/cJJwtdzW6Nt6ssb/download/tusLarge.tar.gz
-tar -xzvf data/tusLarge.tar.gz -C data
-rm data/tusLarge.tar.gz
-
-echo "4/4 Downloading and extracting Wiki-Join"
-wget -O data/wiki-join.tar.gz https://nuage.lip6.fr/index.php/s/LKWeDCZ9MQcTMCN/download/wiki-join.tar.gz
-tar -xzvf data/wiki-join.tar.gz -C data
-rm data/wiki-join.tar.gz
-
-
-
-However, you'll have to place them in the right directory yourself and extract them. download.sh already does that for you, all you gotta do is "bash download.sh"
-
-
-# 3) create column-shuffled versions of benchmarks for Table Union Search
-
-In order to show the effectiveness of HEARTS compared to LM-based methods like STARMIE, we evaluate the adversarial scenario where columns of different data lakes are shuffled randomly. To this end, you can run prepare_data.sh ia bash prepare_data.sh which will automatically created a shuffled version of each benchmark by constructing alongside the "datalake/" folder of each benchmark, a "datalake-p-col/" folder where each csv has a shuffled column order randomly. Please keep in mind that since HEARTS uses HyTrel, and since HyTrel requires the tables to be truncated, we create truncated versions of each benchmark and shuffle the truncated version in order to create datalake_hytrel and datalake_hytrel_p-col folders for each benchmark. This is part of the method's preprocessing. STARMIE can handle bigger datasets because sampling is done later on, HEARTS needs the tables to be processed truncated to not result in massive hypergraph representations that could saturate the memory. 
 
 # 4) Run the evaluation scripts 
 ## HyTrel
