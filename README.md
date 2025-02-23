@@ -1,4 +1,6 @@
-# HEARTS: Setup Instructions
+# HEARTS: Hypergraph-based Related Table Search
+
+# Setup Instructions
 
 ## 1. Environment Setup
 
