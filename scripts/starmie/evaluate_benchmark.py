@@ -22,7 +22,6 @@ from lsh_search import LSHSearcher
 from hnsw_search import HNSWSearcher
 from faiss_search import FaissSearcher
 from cluster_search import ClusterSearcher
-from fusion_search import FusionSearcher
 from checkPrecisionRecall import calcMetrics, loadDictionaryFromPickleFile
 
 def normalize_table_name(table_name):
@@ -165,7 +164,7 @@ def calculate_detailed_similarity_metrics(original_embeddings, variant_embedding
 
 def instantiate_searcher(searcher_type, table_path, scale=1.0, pooling='mean'):
     """Create appropriate searcher instance with allowed types:
-       naive, bounds, hnsw, lsh, faiss, cluster, fusion.
+       naive, bounds, hnsw, lsh, faiss, cluster.
        If searcher type is 'faiss', the pooling parameter is passed.
     """
     if searcher_type in ['naive', 'bounds']:
@@ -181,18 +180,16 @@ def instantiate_searcher(searcher_type, table_path, scale=1.0, pooling='mean'):
         return FaissSearcher(table_path, scale=scale, pooling=pooling)
     elif searcher_type == 'cluster':
         return ClusterSearcher(table_path, scale=scale)
-    elif searcher_type == 'fusion':
-        return FusionSearcher(table_path, scale=scale)
     else:
         raise ValueError("Unknown searcher type: " + searcher_type)
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate benchmark with specified searcher, and compute similarity metrics")
     parser.add_argument("benchmark", 
-                        choices=['santos', 'tus', 'tusLarge', 'pylon'],
+                        choices=['santos', 'tus', 'tusLarge', 'pylon', 'wiki_union'],
                         help="Benchmark to evaluate")
     parser.add_argument("--searcher_type",
-                        choices=['naive', 'bounds', 'hnsw', 'lsh', 'faiss', 'cluster', 'fusion'],
+                        choices=['naive', 'bounds', 'hnsw', 'lsh', 'faiss', 'cluster'],
                         default='bounds',
                         help="Type of searcher to use")
     parser.add_argument("--distances_only",
@@ -257,11 +254,21 @@ def main():
             'encoder': 'cl',
             'matching': 'exact',
             'table_order': 'column'
+        },
+        'wiki_union': {
+            'max_k': 10,
+            'k_range': 1,
+            'sample_size': 100,
+            'threshold': 0.1,
+            'scale': 1.0,
+            'encoder': 'cl',
+            'matching': 'exact',
+            'table_order': 'column'
         }
     }[args.benchmark]
 
     if args.ao == 'default':
-        if args.benchmark in ['santos', 'pylon']:
+        if args.benchmark in ['santos', 'pylon', 'wiki_union']:
             ao = 'drop_col'
         elif args.benchmark in ['tus', 'tusLarge']:
             ao = 'drop_cell'

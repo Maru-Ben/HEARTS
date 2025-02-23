@@ -26,16 +26,17 @@ from checkPrecisionRecall import calcMetrics, loadDictionaryFromPickleFile
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning, message=".*force_all_finite.*")
 
+MODEL_TYPE = "pretrained"
 
-def setup_directories(benchmark, model_type):
-    """Create output directory structure for the benchmark and model_type"""
-    base_dir = Path(f"output/{benchmark}/{model_type}")
+def setup_directories(benchmark):
+    """Create output directory structure for the benchmark using the fixed model type 'pretrained'."""
+    base_dir = Path(f"output/{benchmark}/{MODEL_TYPE}")
     base_dir.mkdir(parents=True, exist_ok=True)
     return base_dir
 
-def load_embeddings(benchmark, model_type):
-    """Load query and datalake embeddings for a benchmark and model_type from the hytrel directory"""
-    base_path = Path(f"vectors/hytrel/{model_type}/{benchmark}")
+def load_embeddings(benchmark):
+    """Load query and datalake embeddings for a benchmark using the fixed model type 'pretrained'."""
+    base_path = Path(f"vectors/hytrel/{MODEL_TYPE}/{benchmark}")
 
     # Query embeddings (only one set, always from original)
     query_vectors_path = base_path / "query_vectors.pkl"
@@ -77,13 +78,14 @@ def calculate_detailed_similarity_metrics(original_embeddings, variant_embedding
             continue
             
         orig_path = Path("data") / benchmark / "datalake" / f"{table_id}.csv"
-        var_path = None
         if variant == "original":
             var_path = orig_path
         elif variant == "p-col":
             var_path = Path("data") / benchmark / "datalake-p-col" / f"{table_id}.csv"
+        else:
+            continue
 
-        if var_path is None or not var_path.exists():
+        if not var_path.exists():
             continue
 
         orig_columns = load_table_structure(orig_path)
@@ -158,27 +160,18 @@ def instantiate_searcher(searcher_type, datalake_path, scale=1.0, pooling='mean'
         return FaissSearcher(datalake_path, scale, pooling=pooling)
     elif searcher_type == 'cluster':
         return ClusterSearcher(datalake_path, scale=scale)
-    elif searcher_type == 'fusion':
-        # New creative fusion searcher
-        from fusion_search import FusionSearcher
-        return FusionSearcher(datalake_path, scale=scale)
     else:
         raise ValueError(f"Unknown searcher type: {searcher_type}")
 
-
 def main():
     parser = argparse.ArgumentParser(
-        description="Evaluate benchmark with specified model and searcher, and compute similarity metrics"
+        description="Evaluate benchmark with specified searcher, and compute similarity metrics"
     )
     parser.add_argument("benchmark", 
-                        choices=['santos', 'tus', 'tusLarge', 'pylon'],
+                        choices=['santos', 'tus', 'tusLarge', 'pylon', 'wiki_union'],
                         help="Benchmark to evaluate")
-    parser.add_argument("--model_type", 
-                        choices=['pretrained', 'finetuned', 'scratch', 'lora'],
-                        required=True,
-                        help="Model type to evaluate (pretrained, finetuned, scratch, lora)")
     parser.add_argument("--searcher_type",
-                        choices=['naive', 'bounds', 'hnsw', 'lsh', 'faiss', 'cluster', 'fusion'],
+                        choices=['naive', 'bounds', 'hnsw', 'lsh', 'faiss', 'cluster'],
                         default='bounds',
                         help="Type of searcher to use (naive, bounds, hnsw, lsh, faiss, cluster)")
     parser.add_argument("--distances_only",
@@ -188,14 +181,12 @@ def main():
                         type=str,
                         default=None,
                         help="Optional: Override default data directory path")
-    # New argument for pooling method, used only when using the FAISS searcher.
     parser.add_argument("--pooling",
                         choices=['mean', 'max', 'None'],
                         default='mean',
                         help="Pooling method for FAISS searcher. Use 'None' for no aggregation (column-level).")
     args = parser.parse_args()
 
-    # Convert string "None" to actual None if applicable.
     pooling_value = None if args.pooling == "None" else args.pooling
 
     if args.data_dir:
@@ -243,15 +234,25 @@ def main():
             'encoder': 'cl',
             'matching': 'exact',
             'table_order': 'column'
+        },
+        'wiki_union': {
+            'max_k': 10,
+            'k_range': 1,
+            'sample_size': 100,
+            'threshold': 0.1,
+            'scale': 1.0,
+            'encoder': 'cl',
+            'matching': 'exact',
+            'table_order': 'column'
         }
     }[args.benchmark]
 
-    output_dir = setup_directories(args.benchmark, args.model_type)
-    base_vectors_path = Path(f"vectors/hytrel/{args.model_type}/{args.benchmark}")
+    output_dir = setup_directories(args.benchmark)
+    base_vectors_path = Path(f"vectors/hytrel/{MODEL_TYPE}/{args.benchmark}")
     gt_path = data_path / "benchmark.pkl"
 
     # Load embeddings
-    queries, datalake_embeddings = load_embeddings(args.benchmark, args.model_type)
+    queries, datalake_embeddings = load_embeddings(args.benchmark)
 
     # Determine which variants are available (e.g., original and/or p-col)
     variants = list(datalake_embeddings.keys())
@@ -291,7 +292,6 @@ def main():
             print(f"Warning: {temp_path} does not exist, but embeddings were loaded. Skipping {variant}.")
             continue
 
-        # Mark overall start time (includes index building and query search)
         variant_start_time = time.time()
 
         if args.searcher_type == 'faiss':
@@ -313,8 +313,8 @@ def main():
                     K=params['max_k'], 
                     threshold=params['threshold']
                 )
-            elif args.searcher_type in ['naive', 'lsh', 'hnsw', 'faiss', 'cluster', 'fusion']:
-                if args.searcher_type in ['lsh', 'hnsw', 'faiss', 'cluster', 'fusion']:
+            elif args.searcher_type in ['naive', 'lsh', 'hnsw', 'faiss', 'cluster']:
+                if args.searcher_type in ['lsh', 'hnsw', 'faiss', 'cluster']:
                     search_results, _ = searcher.topk(
                         enc=params['encoder'],
                         query=query,

@@ -68,84 +68,38 @@ class EmbeddingGenerator:
         self.model.eval()
 
     def _load_checkpoint(self, checkpoint_dir):
-        """Load DeepSpeed or standard checkpoint"""
+        """Load standard or DeepSpeed checkpoint"""
         logger.info(f"Loading checkpoint from {checkpoint_dir}")
         try:
             state_dict = torch.load(checkpoint_dir)
             new_state_dict = OrderedDict()
-
-            # Attempt to load DeepSpeed or LoRA modified checkpoint
-            if any('base_layer' in k for k in state_dict.keys()):
-                logger.info("Detected LoRA checkpoint, merging weights...")
+            
+            # Try DeepSpeed format first
+            try:
+                for k, v in state_dict['module'].items():
+                    if k.startswith('_forward_module.model.'):
+                        name = k[22:]
+                    elif k.startswith('module.model.'):
+                        name = k[13:]
+                    elif k.startswith('model.'):
+                        name = k[6:]
+                    else:
+                        name = k
+                    new_state_dict[name] = v
+                logger.info("Loaded DeepSpeed checkpoint")
+            except KeyError:
+                # Regular format
                 for k, v in state_dict.items():
-                    if 'base_layer' not in k and 'lora' not in k:
-                        if k.startswith('_forward_module.model.'):
-                            name = k[22:]
-                        elif k.startswith('module.model.'):
-                            name = k[13:]
-                        elif k.startswith('model.'):
-                            name = k[6:]
-                        else:
-                            name = k
-                        new_state_dict[name] = v
-
-                # Merge LoRA weights
-                for k, v in state_dict.items():
-                    if 'base_layer' in k:
-                        base_name = k.replace('.base_layer', '')
-                        if base_name.startswith('_forward_module.model.'):
-                            base_name = base_name[22:]
-                        elif base_name.startswith('module.model.'):
-                            base_name = base_name[13:]
-                        elif base_name.startswith('model.'):
-                            base_name = base_name[6:]
-                        
-                        if base_name not in new_state_dict:
-                            new_state_dict[base_name] = v
-                        
-                        lora_a_key = k.replace('base_layer', 'lora.lora_A')
-                        lora_b_key = k.replace('base_layer', 'lora.lora_B')
-                        lora_a = state_dict.get(lora_a_key)
-                        lora_b = state_dict.get(lora_b_key)
-                        
-                        if lora_a is not None and lora_b is not None:
-                            try:
-                                merged_weight = v + torch.mm(lora_a, lora_b).reshape(v.shape)
-                                new_state_dict[base_name] = merged_weight
-                            except Exception as e:
-                                logger.warning(f"Failed to merge LoRA weights for {base_name}: {str(e)}")
-                                new_state_dict[base_name] = v
-                
-                logger.info("Successfully merged LoRA weights")
-            else:
-                # Handle regular or DeepSpeed checkpoint
-                try:
-                    # DeepSpeed format
-                    for k, v in state_dict['module'].items():
-                        if 'model' in k:
-                            if k.startswith('_forward_module.model.'):
-                                name = k[22:]
-                            elif k.startswith('module.model.'):
-                                name = k[13:]
-                            elif k.startswith('model.'):
-                                name = k[6:]
-                            else:
-                                name = k
-                            new_state_dict[name] = v
-                    logger.info("Loaded DeepSpeed checkpoint")
-                except KeyError:
-                    # Regular format
-                    for k, v in state_dict.items():
-                        if k.startswith('_forward_module.model.'):
-                            name = k[22:]
-                        elif k.startswith('module.model.'):
-                            name = k[13:]
-                        elif k.startswith('model.'):
-                            name = k[6:]
-                        else:
-                            name = k
-                        new_state_dict[name] = v
-                    logger.info("Loaded regular checkpoint")
+                    if k.startswith('_forward_module.model.'):
+                        name = k[22:]
+                    elif k.startswith('module.model.'):
+                        name = k[13:]
+                    elif k.startswith('model.'):
+                        name = k[6:]
+                    else:
+                        name = k
+                    new_state_dict[name] = v
+                logger.info("Loaded regular checkpoint")
                         
             missing_keys, unexpected_keys = self.model.load_state_dict(new_state_dict, strict=False)
             
@@ -159,9 +113,6 @@ class EmbeddingGenerator:
         except Exception as e:
             logger.error(f"Error loading checkpoint: {str(e)}")
             raise
-
-
-
 
     def _tokenize_word(self, word: str) -> Tuple[List[str], List[int]]:
         number_pattern = re.compile(r"(\d+)\.?(\d*)")
@@ -326,26 +277,15 @@ class EmbeddingGenerator:
         
         return stats
 
-def infer_model_type(checkpoint_path):
-    if 'pretrained' in checkpoint_path:
-        return 'pretrained'
-    elif 'finetune' in checkpoint_path:
-        return 'finetuned'
-    elif 'lora' in checkpoint_path:
-        return 'lora'
-    elif 'scratch' in checkpoint_path:
-        return 'scratch'
-    else:
-        return 'unknown'
 
-def process_benchmark(benchmark, generator, args, model_type):
+def process_benchmark(benchmark, generator, args):
     logger.info(f"Processing benchmark: {benchmark}")
     
-    # We'll store embeddings in: vectors/hytrel/{model_type}/{benchmark}/
-    base_vectors_path = os.path.join('vectors', 'hytrel', model_type, benchmark)
+    # We'll store embeddings in: vectors/hytrel/pretrained/{benchmark}/
+    base_vectors_path = os.path.join('vectors', 'hytrel', 'pretrained', benchmark)
     os.makedirs(base_vectors_path, exist_ok=True)
 
-    # We'll handle both original and p-col variants if p-col exists
+    # Handle both original and p-col variants if p-col exists
     variants = ['original']
     dataset_path = os.path.join('data', benchmark)
     datalake_path = os.path.join(dataset_path, 'datalake')
@@ -368,7 +308,7 @@ def process_benchmark(benchmark, generator, args, model_type):
             "variant": variant,
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "checkpoint": args.checkpoint_dir,
-            "model_type": model_type
+            "model_type": "pretrained"
         }
 
         if variant == 'original':
@@ -391,7 +331,6 @@ def process_benchmark(benchmark, generator, args, model_type):
             timing_stats["query"] = query_stats
             query_run_done = True
         else:
-            # If variant == p-col, we skip queries as they are the same
             logger.info(f"Skipping queries for {benchmark}/{variant} because queries are the same.")
         
         logger.info(f"Saving timing statistics to {timing_path}")
@@ -406,19 +345,17 @@ def main():
     parser = argparse.ArgumentParser(description='Generate embeddings for table columns using HyTrel')
     parser.add_argument('--benchmark', type=str, required=True)
     parser.add_argument('--checkpoint_dir', type=str, required=True)
-    parser.add_argument('--max_rows', type=int, default=50)
+    parser.add_argument('--max_rows', type=int, default=30)
     parser.add_argument('--max_cols', type=int, default=50)
     parser.add_argument('--batch_size', type=int, default=1)
     args = parser.parse_args()
 
-    model_type = infer_model_type(args.checkpoint_dir)
-    logger.info(f"Inferred model type: {model_type}")
-
+    logger.info("Model type: pretrained")
     generator = EmbeddingGenerator(args.checkpoint_dir)
-    all_stats = process_benchmark(args.benchmark, generator, args, model_type)
+    all_stats = process_benchmark(args.benchmark, generator, args)
 
     # Save combined stats
-    base_vectors_path = os.path.join('vectors', 'hytrel', model_type, args.benchmark)
+    base_vectors_path = os.path.join('vectors', 'hytrel', 'pretrained', args.benchmark)
     combined_stats_path = os.path.join(base_vectors_path, 'combined_stats.json')
     with open(combined_stats_path, 'w') as f:
         json.dump(all_stats, f, indent=4)

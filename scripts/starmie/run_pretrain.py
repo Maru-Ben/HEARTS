@@ -63,10 +63,6 @@ if __name__ == '__main__':
         path = 'data/tusLarge/datalake'
     elif hp.task == "pylon":
         path = 'data/pylon/datalake'
-    elif hp.task == "ugen_v1":
-        path = 'data/ugen_v1/datalake'
-    elif hp.task == "ugen_v2":
-        path = 'data/ugen_v2/datalake'
     else:
         path = 'data/%s/datalake' % hp.task
     

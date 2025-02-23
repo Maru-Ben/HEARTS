@@ -22,8 +22,6 @@ MISSING_CAP_TAG = '[TAB]'
 MISSING_CELL_TAG = "[CELL]"
 MISSING_HEADER_TAG = "[HEAD]"
 
-
-
 @dataclass
 class NumpyDataset(torch.utils.data.Dataset):
     array: np.ndarray
