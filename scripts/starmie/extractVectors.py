@@ -162,11 +162,14 @@ if __name__ == '__main__':
     # For santos and pylon: use drop_col and shuffle_col with tfidf_entity.
     # For tus and tusLarge: use drop_cell and shuffle_col with alphaHead.
     if base_benchmark in ['santos', 'pylon']:
-        augmentation_options = ['drop_col', 'shuffle_col']
+        augmentation_options = ['drop_col'] # augmentation_options = ['drop_col', 'shuffle_col'] 
         sm = 'tfidf_entity'
-    elif base_benchmark in ['tus', 'tusLarge']:
-        augmentation_options = ['drop_cell', 'shuffle_col']
+    elif base_benchmark in ['tus']:
+        augmentation_options = ['drop_cell'] # augmentation_options = ['drop_cell', 'shuffle_col']
         sm = 'alphaHead'
+    elif base_benchmark in ['tusLarge']:
+        augmentation_options = ['drop_cell'] # augmentation_options = ['drop_cell', 'shuffle_col']
+        sm = 'tfidf_entity'
     else:
         # For other benchmarks, you can retain the original logic or set defaults.
         augmentation_options = ['drop_col']
@@ -189,7 +192,7 @@ if __name__ == '__main__':
 
         # Modify model path to include augmentation option.
         model_path = f"checkpoints/starmie/{base_benchmark}/model_{ao}_{sm}_{table_order}_{run_id}.pt"
-        ckpt = torch.load(model_path, map_location=torch.device('cuda'))
+        ckpt = torch.load(model_path, map_location=torch.device('cuda'), weights_only=False)
         model, trainset = load_checkpoint(ckpt)
 
         # Setup data paths

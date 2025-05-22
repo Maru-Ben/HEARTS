@@ -4,7 +4,7 @@ CUDA_VISIBLE_DEVICES=0 python scripts/starmie/run_pretrain.py \
   --batch_size 64 \
   --lr 5e-5 \
   --lm roberta \
-  --n_epochs 10 \
+  --n_epochs 2 \
   --max_len 256 \
   --projector 768 \
   --save_model \
@@ -36,7 +36,7 @@ CUDA_VISIBLE_DEVICES=0 python scripts/starmie/run_pretrain.py \
   --batch_size 64 \
   --lr 5e-5 \
   --lm roberta \
-  --n_epochs 10 \
+  --n_epochs 2 \
   --max_len 256 \
   --projector 768 \
   --save_model \
@@ -51,7 +51,7 @@ CUDA_VISIBLE_DEVICES=0 python scripts/starmie/run_pretrain.py \
   --batch_size 64 \
   --lr 5e-5 \
   --lm roberta \
-  --n_epochs 10 \
+  --n_epochs 2 \
   --max_len 256 \
   --projector 768 \
   --save_model \
@@ -67,7 +67,7 @@ CUDA_VISIBLE_DEVICES=0 python scripts/starmie/run_pretrain.py \
   --batch_size 64 \
   --lr 5e-5 \
   --lm roberta \
-  --n_epochs 10 \
+  --n_epochs 2 \
   --max_len 256 \
   --projector 768 \
   --save_model \
@@ -82,7 +82,7 @@ CUDA_VISIBLE_DEVICES=0 python scripts/starmie/run_pretrain.py \
   --batch_size 64 \
   --lr 5e-5 \
   --lm roberta \
-  --n_epochs 10 \
+  --n_epochs 2 \
   --max_len 256 \
   --projector 768 \
   --save_model \

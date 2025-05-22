@@ -278,7 +278,7 @@ def load_checkpoint(ckpt):
     print(device)
     model = BarlowTwinsSimCLR(hp, device=device, lm=hp.lm)
     model = model.to(device)
-    model.load_state_dict(ckpt['model'])
+    model.load_state_dict(ckpt['model'], strict=False)
 
     # dataset paths, depending on benchmark for the current task
     ds_path = 'data/santos/datalake'
